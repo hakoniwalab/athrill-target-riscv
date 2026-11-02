@@ -136,9 +136,11 @@ if(BUILD_TESTING)
   riscv_target(athrill-decode-benchmark)
   add_executable(athrill-decode-test test/decode_test.c)
   riscv_target(athrill-decode-test)
+  # The memory map in athrill_riscv_config refers to the device registers,
+  # so the device library follows it again for single-pass linkers (GNU ld).
   target_link_libraries(athrill-decode-test PRIVATE athrill_riscv_cpu
     athrill_riscv_device athrill_bus athrill_mpu athrill_std
-    athrill_riscv_config)
+    athrill_riscv_config athrill_riscv_device)
   add_test(NAME athrill-decode COMMAND athrill-decode-test)
 
   # Firmware tests: build the programs with test/build-firmware.sh into
