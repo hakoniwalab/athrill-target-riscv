@@ -40,7 +40,7 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
     if (!riscv_pmp_check(core, core->reg.pc, 2, CpuMemoryAccess_EXEC)) {
         riscv_raise_exception(core, 1, core->reg.pc); core->access_fault = TRUE; return STD_E_OK;
     }
-    if (bus_get_pointer(core->core_id, (uint32)core->reg.pc, &p) != STD_E_OK) {
+    if (bus_get_pointer(core->core_id, core->reg.pc, &p) != STD_E_OK) {
         riscv_raise_exception(core, 1, core->reg.pc); core->access_fault = TRUE; return STD_E_OK;
     }
     lo = (uint16)p[0] | ((uint16)p[1] << 8);
@@ -79,16 +79,16 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 
 void cpu_illegal_opcode_trap(CoreIdType id) { riscv_raise_exception(&virtual_cpu.cores[id].core, 2, 0); }
 std_bool cpu_illegal_access(CoreIdType id) { std_bool v = virtual_cpu.cores[id].core.access_fault; virtual_cpu.cores[id].core.access_fault = FALSE; return v; }
-std_bool cpu_has_permission(CoreIdType id, MpuAddressRegionEnumType region, CpuMemoryAccessType access, uint32 addr, uint32 size)
+std_bool cpu_has_permission(CoreIdType id, MpuAddressRegionEnumType region, CpuMemoryAccessType access, AthrillAddrType addr, AthrillAddrType size)
 { (void)region; return riscv_pmp_check(&virtual_cpu.cores[id].core, addr, size, access); }
 
 uint32 cpu_get_current_core_id(void) { return virtual_cpu.current_core ? virtual_cpu.current_core->core.core_id : 0; }
 uint32 cpu_get_ep(const TargetCoreType *core) { (void)core; return 0; }
 uint32 cpu_get_current_core_register(uint32 i) { return (uint32)virtual_cpu.current_core->core.reg.x[i]; }
-uint32 cpu_get_current_core_pc(void) { return (uint32)virtual_cpu.current_core->core.reg.pc; }
-void cpu_set_core_pc(CoreIdType id, uint32 pc) { virtual_cpu.cores[id].core.reg.pc = pc; }
+AthrillAddrType cpu_get_current_core_pc(void) { return virtual_cpu.current_core->core.reg.pc; }
+void cpu_set_core_pc(CoreIdType id, AthrillAddrType pc) { virtual_cpu.cores[id].core.reg.pc = pc; }
 uint32 cpu_get_current_core_sp(void) { return (uint32)virtual_cpu.current_core->core.reg.x[2]; }
 uint32 cpu_get_current_core_ep(void) { return 0; }
-uint32 cpu_get_return_addr(const TargetCoreType *core) { return (uint32)core->reg.x[1]; }
+AthrillAddrType cpu_get_return_addr(const TargetCoreType *core) { return core->reg.x[1]; }
 CoreIdType cpu_get_core_id(const TargetCoreType *core) { return core->core_id; }
 void intc_cpu_trigger_interrupt(CoreIdType id, int intno) { (void)id; (void)intno; }

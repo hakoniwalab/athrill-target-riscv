@@ -41,7 +41,7 @@ typedef struct {
     std_bool access_fault;
 } TargetCoreType;
 
-static inline uint32 cpu_get_pc(const TargetCoreType *core) { return (uint32)core->reg.pc; }
+static inline AthrillAddrType cpu_get_pc(const TargetCoreType *core) { return core->reg.pc; }
 static inline uint32 cpu_get_sp(const TargetCoreType *core) { return (uint32)core->reg.x[CPU_REG_SP]; }
 
 #endif
