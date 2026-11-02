@@ -5,7 +5,10 @@
  * After a load inside the region, loads just before it, just after it and
  * across its end (same page each time) must not be served from that
  * region: they are load access faults (cause 5) at the load. A load inside
- * the region reaches its ECALL (cause 11).
+ * the region reaches its ECALL (cause 11). The load across the end is
+ * misaligned: Erbium allows misaligned loads and reports the access fault,
+ * a standard RV64 build may report address misaligned (cause 4) instead;
+ * either way the load must not succeed.
  * The last line is "SELFTEST PASS" or "SELFTEST FAIL <count>".
  */
 #include <stdint.h>
@@ -13,6 +16,7 @@
 #define SERIAL (*(volatile uint8_t *)0x10000000UL)
 
 #define MSTATUS_MPP_MACHINE 0x1800U
+#define CAUSE_LOAD_ADDRESS_MISALIGNED 4U
 #define CAUSE_LOAD_ACCESS_FAULT 5U
 #define CAUSE_ECALL_FROM_MACHINE 11U
 
@@ -54,8 +58,12 @@ int main(void)
 	test_check("load after the region faults",
 		faults_at(load_after_region, load_after_region_insn));
 	(void)run(load_inside_region);
-	test_check("load across the region end faults",
-		faults_at(load_across_region_end, load_across_region_end_insn));
+	{
+		uint64_t cause = run(load_across_region_end);
+		test_check("load across the region end faults",
+			(cause == CAUSE_LOAD_ACCESS_FAULT || cause == CAUSE_LOAD_ADDRESS_MISALIGNED)
+			&& trap_epc == (uint64_t)(uintptr_t)load_across_region_end_insn);
+	}
 	test_report_finish();
 	return 0;
 }
