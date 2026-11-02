@@ -12,6 +12,19 @@ CpuType virtual_cpu;
 uint32 riscv_trace_enabled;
 static uint64 riscv_trace_sequence;
 
+void riscv_trace_store(
+	TargetCoreType *core,
+	uint64 address,
+	uint8 size,
+	uint64 value)
+{
+	core->trace_store_address = address;
+	core->trace_store_size = size;
+	core->trace_store_value = (size < 8U) ?
+		(value & ((1ULL << (size * 8U)) - 1U)) : value;
+	core->trace_store_valid = TRUE;
+}
+
 static void reset_core(TargetCoreType *core)
 {
     CoreIdType id = core->core_id;
@@ -19,6 +32,9 @@ static void reset_core(TargetCoreType *core)
     core->core_id = id;
     core->reg.privilege = RISCV_PRIV_M;
     core->reg.csr.misa = (2ULL << 62) | (1ULL << ('I'-'A')) | (1ULL << ('M'-'A')) | (1ULL << ('C'-'A')) | (1ULL << ('F'-'A'));
+    if (CPU_CONFIG_ERBIUM_COMPAT) {
+        core->reg.csr.mstatus = 0x0000000a00001800ULL;
+    }
     core->reg.csr.mhartid = id;
 }
 
@@ -71,11 +87,11 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
     int retired = RISCV_EXEC_TRAP;
     uint64 pending = core->reg.csr.mip & core->reg.csr.mie;
     uint64 trace_pc = core->reg.pc;
-    uint64 trace_mstatus = core->reg.csr.mstatus;
-    uint64 trace_mepc = core->reg.csr.mepc;
-    uint64 trace_mcause = core->reg.csr.mcause;
+    CpuRegisterType trace_registers = core->reg;
+    uint32 trace_index;
     core->reg.x[0] = 0;
     core->access_fault = FALSE;
+    core->trace_store_valid = FALSE;
     if (pending != 0 && (core->reg.privilege != RISCV_PRIV_M || (core->reg.csr.mstatus & (1ULL << 3)) != 0)) {
         unsigned cause = (pending & (1ULL << 11)) ? 11U : (pending & (1ULL << 7)) ? 7U : 3U;
         riscv_raise_interrupt(core, cause);
@@ -119,10 +135,21 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 clock_done:
     if (riscv_trace_enabled && !core->is_halt) {
         printf("I hart=%u seq=%" PRIu64 " prv=%u pc=%016" PRIx64 " insn=%08x\n", (unsigned)id, riscv_trace_sequence++, (unsigned)core->reg.privilege, trace_pc, insn);
-        if (decoded != NULL && decoded->rd != 0U && retired == RISCV_EXEC_RETIRED) printf("X hart=%u reg=%u value=%016" PRIx64 "\n", (unsigned)id, (unsigned)decoded->rd, core->reg.x[decoded->rd]);
-        if (core->reg.csr.mstatus != trace_mstatus) printf("C hart=%u csr=300 value=%016" PRIx64 "\n", (unsigned)id, core->reg.csr.mstatus);
-        if (core->reg.csr.mepc != trace_mepc) printf("C hart=%u csr=341 value=%016" PRIx64 "\n", (unsigned)id, core->reg.csr.mepc);
-        if (core->reg.csr.mcause != trace_mcause) printf("T hart=%u cause=%016" PRIx64 " tval=%016" PRIx64 " epc=%016" PRIx64 "\n", (unsigned)id, core->reg.csr.mcause, core->reg.csr.mtval, core->reg.csr.mepc);
+        for (trace_index = 1U; trace_index < 32U; trace_index++) {
+            if (core->reg.x[trace_index] != trace_registers.x[trace_index]) printf("X hart=%u reg=%u value=%016" PRIx64 "\n", (unsigned)id, trace_index, core->reg.x[trace_index]);
+            if (core->reg.f[trace_index] != trace_registers.f[trace_index]) printf("F hart=%u reg=%u value=%016" PRIx64 "\n", (unsigned)id, trace_index, core->reg.f[trace_index]);
+        }
+        if (core->reg.f[0] != trace_registers.f[0]) printf("F hart=%u reg=0 value=%016" PRIx64 "\n", (unsigned)id, core->reg.f[0]);
+#define TRACE_CSR(number, member) if (core->reg.csr.member != trace_registers.csr.member) printf("C hart=%u csr=%03x value=%016" PRIx64 "\n", (unsigned)id, number, core->reg.csr.member)
+        TRACE_CSR(0x300U, mstatus); TRACE_CSR(0x301U, misa); TRACE_CSR(0x304U, mie); TRACE_CSR(0x305U, mtvec);
+        TRACE_CSR(0x340U, mscratch); TRACE_CSR(0x341U, mepc); TRACE_CSR(0x342U, mcause); TRACE_CSR(0x343U, mtval); TRACE_CSR(0x344U, mip);
+        TRACE_CSR(0x302U, medeleg); TRACE_CSR(0x303U, mideleg); TRACE_CSR(0x306U, mcounteren); TRACE_CSR(0x30aU, menvcfg);
+        TRACE_CSR(0x100U, sstatus); TRACE_CSR(0x104U, sie); TRACE_CSR(0x105U, stvec); TRACE_CSR(0x106U, scounteren);
+        TRACE_CSR(0x140U, sscratch); TRACE_CSR(0x141U, sepc); TRACE_CSR(0x142U, scause); TRACE_CSR(0x143U, stval); TRACE_CSR(0x144U, sip); TRACE_CSR(0x180U, satp);
+#undef TRACE_CSR
+        if (core->reg.fcsr != trace_registers.fcsr) printf("C hart=%u csr=003 value=%016" PRIx64 "\n", (unsigned)id, (uint64)core->reg.fcsr);
+        if (core->trace_store_valid) printf("W hart=%u addr=%016" PRIx64 " size=%u value=%016" PRIx64 "\n", (unsigned)id, core->trace_store_address, (unsigned)core->trace_store_size, core->trace_store_value);
+        if (core->reg.csr.mcause != trace_registers.csr.mcause) printf("T hart=%u cause=%016" PRIx64 " tval=%016" PRIx64 " epc=%016" PRIx64 "\n", (unsigned)id, core->reg.csr.mcause, core->reg.csr.mtval, core->reg.csr.mepc);
     }
     core->internal_cycle++;
     if (retired == RISCV_EXEC_RETIRED) core->internal_instret++;

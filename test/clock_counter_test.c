@@ -43,18 +43,27 @@ int main(void)
 
     /* Misaligned SD/LD are split and preserve the complete scalar value. */
     cpu_reset(0); c=&virtual_cpu.cores[0].core; put_insn(0,0x0020b023U);put_insn(4,0x0000b183U);
-    c->reg.x[1]=101;c->reg.x[2]=0x8877665544332211ULL;cpu_supply_clock(0);cpu_supply_clock(0);
+    c->reg.x[1]=101;c->reg.x[2]=0x8877665544332211ULL;cpu_supply_clock(0);
+#if CPU_CONFIG_ERBIUM_COMPAT
+    cpu_supply_clock(0);
     if(c->reg.x[3]!=0x8877665544332211ULL)return 5;
+#else
+    if(c->reg.csr.mcause!=6U)return 5;
+#endif
 
     /* Erbium architectural counters read zero while internal counters advance. */
     cpu_reset(0); c=&virtual_cpu.cores[0].core;put_insn(0,0xb0002273U);cpu_supply_clock(0);
     if(c->reg.x[4]!=0||c->internal_cycle!=1||c->internal_instret!=1)return 6;
 
     cpu_reset(0); c=&virtual_cpu.cores[0].core;put_insn(0,0x0000100fU);c->reg.csr.mtvec=32;cpu_supply_clock(0);
+#if CPU_CONFIG_ERBIUM_COMPAT
     if(c->reg.csr.mcause!=30||c->reg.csr.mtval!=0x0000100fU||c->reg.pc!=32)return 7;
+#else
+    if(c->reg.pc!=4||c->internal_instret!=1)return 7;
+#endif
 
     cpu_reset(0); c=&virtual_cpu.cores[0].core;put_insn(0,0x10500073U);c->reg.csr.mie=1ULL<<3;cpu_supply_clock(0);
     if(!c->is_halt)return 8;intc_cpu_trigger_interrupt(0,3);if(c->is_halt)return 9;
-    {uint32 value=0;clock.clock=50;device_supply_clock(&clock);erbium_timer_ops.get_data32(NULL,0,0x80f40200ULL,&value);if(value!=1U)return 10;}
+    {uint32 value=0;clock.clock=100;device_supply_clock(&clock);erbium_timer_ops.get_data32(NULL,0,0x80f40200ULL,&value);if(value!=1U)return 10;}
     return 0;
 }

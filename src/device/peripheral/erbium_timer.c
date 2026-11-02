@@ -9,7 +9,7 @@ static uint64 mtime,mtimecmp,last_clock,remainder;
 static uint32 cpu_frequency=ATHRILL_CPU_DEFAULT_FREQUENCY;
 static uint32 timer_frequency=ERBIUM_TIMER_DEFAULT_FREQUENCY;
 static uint64 cpu_hz(void){return(uint64)cpu_frequency*1000000ULL;}
-void erbium_timer_configure(uint32 cpu_mhz,uint32 timer_hz){cpu_frequency=cpu_mhz?cpu_mhz:ATHRILL_CPU_DEFAULT_FREQUENCY;timer_frequency=timer_hz?timer_hz:ERBIUM_TIMER_DEFAULT_FREQUENCY;remainder=0;}
+void erbium_timer_configure(uint32 cpu_mhz,uint32 timer_hz){cpu_frequency=cpu_mhz?cpu_mhz:ATHRILL_CPU_DEFAULT_FREQUENCY;timer_frequency=(timer_hz?timer_hz:ERBIUM_TIMER_DEFAULT_FREQUENCY)/2U;remainder=0;}
 static uint32 word(AthrillAddrType a){uint64 v=(a-TIMER_BASE)<8?mtime:mtimecmp;return(uint32)(v>>(((a-TIMER_BASE)&4U)*8U));}
 static Std_ReturnType g8(MpuAddressRegionType*r,CoreIdType c,AthrillAddrType a,uint8*d){uint32 v=word(a&~3ULL);(void)r;(void)c;*d=(uint8)(v>>((a&3U)*8U));return STD_E_OK;}
 static Std_ReturnType g16(MpuAddressRegionType*r,CoreIdType c,AthrillAddrType a,uint16*d){uint8 x,y;g8(r,c,a,&x);g8(r,c,a+1,&y);*d=x|((uint16)y<<8);return STD_E_OK;}

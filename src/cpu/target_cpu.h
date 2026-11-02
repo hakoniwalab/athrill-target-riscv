@@ -52,6 +52,8 @@ typedef struct TargetCoreTypeTag {
     OpDecodedCodeType *decoded_code;
     std_bool access_fault;
     uint64 internal_cycle, internal_instret, pmp_epoch;
+    uint64 trace_store_address, trace_store_value;
+    uint8 trace_store_size, trace_store_valid;
 #define RISCV_DECODE_CACHE_ENTRIES 2048U
     RiscvDecodedInsn decode_cache[RISCV_DECODE_CACHE_ENTRIES];
 } TargetCoreType;

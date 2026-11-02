@@ -58,6 +58,9 @@ set(RISCV_CPU_SOURCES
   src/cpu/cpu_exec/op_exec_branch.c
   src/cpu/cpu_exec/op_exec_system.c
   src/cpu/cpu_exec/op_exec_fpu.c
+  src/cpu/cpu_exec/op_exec_fpu_arithmetic.c
+  src/cpu/cpu_exec/op_exec_fpu_compare.c
+  src/cpu/cpu_exec/op_exec_fpu_convert.c
   src/cpu/mpu/pmp.c)
 
 add_library(athrill_riscv_cpu STATIC
@@ -66,7 +69,7 @@ add_library(athrill_riscv_cpu STATIC
 riscv_target(athrill_riscv_cpu)
 
 set(DEVICE_SOURCES ${ATHRILL_DEVICE_COMMON_SOURCES} ${ATHRILL_DEVICE_THREAD_SOURCES}
-  src/device/device.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
+  src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
   src/device/peripheral/erbium_plic.c src/debugger/executor/concrete_executor/dbg_target_cpu.c
   src/debugger/executor/concrete_executor/dbg_target_serial.c)
 if(ATHRILL_ENABLE_EXDEV)
@@ -109,7 +112,7 @@ if(BUILD_TESTING)
   add_test(NAME athrill-pmp COMMAND athrill-pmp-test)
   add_executable(athrill-clock-counter-test test/clock_counter_test.c
     ${RISCV_CPU_SOURCES}
-    src/device/device.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
+    src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
     src/device/peripheral/erbium_plic.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)

@@ -46,6 +46,7 @@ static int store_value(
 	if (error != STD_E_OK) {
 		return op_exec_memory_fault(core, address, 7U);
 	}
+	riscv_trace_store(core, address, (uint8)width, value);
 	riscv_decode_cache_invalidate(core, address, width);
 	return op_exec_advance(core, decoded);
 }

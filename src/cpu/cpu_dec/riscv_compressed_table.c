@@ -69,7 +69,7 @@ std_bool riscv_expand_compressed(uint16 c, uint32*o)
 		{
 			if (f == 7)
 			{
-				u |= (c >> 4) & 0xc0U;
+				u = ((c >> 7) & 0x38U) | ((c << 1) & 0xc0U);
 			}
 			*o = cs(f == 6 ? 2 : 3, rp, r2p, u);
 			return TRUE;

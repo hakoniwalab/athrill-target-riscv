@@ -123,6 +123,28 @@ static uint64 *csr_pointer(TargetCoreType *core, uint32 number)
 	}
 }
 
+static void normalize_mstatus(TargetCoreType *core)
+{
+	uint64 status = core->reg.csr.mstatus;
+
+	if (!CPU_CONFIG_ERBIUM_COMPAT) {
+		return;
+	}
+	/* Erbium implements only Off and Dirty for FS.  RV64 UXL/SXL are fixed. */
+	if ((status & (3ULL << 13U)) != 0U) {
+		status |= 3ULL << 13U;
+	}
+	status &= ~(0xfULL << 32U);
+	status |= 0xaULL << 32U;
+	if ((status & (3ULL << 13U)) == (3ULL << 13U)) {
+		status |= 1ULL << 63U;
+	}
+	else {
+		status &= ~(1ULL << 63U);
+	}
+	core->reg.csr.mstatus = status;
+}
+
 static std_bool fp_csr_access(
 	TargetCoreType *core,
 	uint32 number,
@@ -258,6 +280,9 @@ static int execute_csr(
 			}
 			else {
 				*pointer = old & ~source;
+			}
+			if (number == 0x300U) {
+				normalize_mstatus(core);
 			}
 			if ((number == 0x3a0U) || (number == 0x3a2U) ||
 				((number >= 0x3b0U) && (number <= 0x3bfU))) {
