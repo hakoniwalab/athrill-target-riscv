@@ -5,6 +5,7 @@
  */
 #include "erbium_devices.h"
 #include "concrete_executor/target/dbg_target_serial.h"
+#include "mmio_register.h"
 #include <string.h>
 #define UART_BASE 0x02004000ULL
 #define UART_FIFO_SIZE 16U
@@ -157,51 +158,55 @@ static void write_reg(AthrillAddrType a, uint32 v)
 		break;
 	}
 }
-static Std_ReturnType g8(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint8*d)
+static Std_ReturnType get8(MpuAddressRegionType *region, CoreIdType core_id, AthrillAddrType address, uint8 *data)
 {
-	uint32 v = read_reg(a & ~3ULL);
-	(void)r;
-	(void)c;
-	*d = (uint8)(v >> ((a & 3U) * 8U));
+	(void)region;
+	(void)core_id;
+	*data = (uint8)mmio_read(read_reg, address, 1U);
 	return STD_E_OK;
 }
-static Std_ReturnType g16(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint16*d)
+
+static Std_ReturnType get16(MpuAddressRegionType *region, CoreIdType core_id, AthrillAddrType address, uint16 *data)
 {
-	uint8 x, y;
-	g8(r, c, a, &x);
-	g8(r, c, a + 1, &y);
-	*d = (uint16)x | ((uint16)y << 8);
+	(void)region;
+	(void)core_id;
+	*data = (uint16)mmio_read(read_reg, address, 2U);
 	return STD_E_OK;
 }
-static Std_ReturnType g32(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint32*d)
+
+static Std_ReturnType get32(MpuAddressRegionType *region, CoreIdType core_id, AthrillAddrType address, uint32 *data)
 {
-	(void)r;
-	(void)c;
-	*d = read_reg(a);
+	(void)region;
+	(void)core_id;
+	*data = mmio_read(read_reg, address, 4U);
 	return STD_E_OK;
 }
-static Std_ReturnType p8(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint8 d)
+
+static Std_ReturnType put8(MpuAddressRegionType *region, CoreIdType core_id, AthrillAddrType address, uint8 data)
 {
-	(void)r;
-	(void)c;
-	write_reg(a, d);
+	(void)region;
+	(void)core_id;
+	mmio_write(write_reg, address, 1U, data);
 	return STD_E_OK;
 }
-static Std_ReturnType p16(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint16 d)
+
+static Std_ReturnType put16(MpuAddressRegionType *region, CoreIdType core_id, AthrillAddrType address, uint16 data)
 {
-	(void)r;
-	(void)c;
-	write_reg(a, d);
+	(void)region;
+	(void)core_id;
+	mmio_write(write_reg, address, 2U, data);
 	return STD_E_OK;
 }
-static Std_ReturnType p32(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint32 d)
+
+static Std_ReturnType put32(MpuAddressRegionType *region, CoreIdType core_id, AthrillAddrType address, uint32 data)
 {
-	(void)r;
-	(void)c;
-	write_reg(a, d);
+	(void)region;
+	(void)core_id;
+	mmio_write(write_reg, address, 4U, data);
 	return STD_E_OK;
 }
-MpuAddressRegionOperationType erbium_uart_ops = {g8, g16, g32, p8, p16, p32, NULL};
+
+MpuAddressRegionOperationType erbium_uart_ops = {get8, get16, get32, put8, put16, put32, NULL};
 void erbium_uart_reset(void)
 {
 	memset(erbium_uart_data, 0, sizeof(erbium_uart_data));

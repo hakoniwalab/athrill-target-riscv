@@ -158,6 +158,19 @@ static void check_tx_empty_interrupt(void)
 	check("disabling the interrupt drops the line at once", plic_level == FALSE);
 }
 
+static void check_halfword_receive(void)
+{
+	uint16 value;
+
+	start();
+	(void)erbium_uart_receive('A');
+	(void)erbium_uart_receive('B');
+	erbium_uart_ops.get_data16(NULL, 0, UART_BASE + 0x10U, &value);
+	check("halfword read of RX takes one character", value == 'A');
+	erbium_uart_ops.get_data16(NULL, 0, UART_BASE + 0x10U, &value);
+	check("next halfword read takes the next one", value == 'B');
+}
+
 int main(void)
 {
 	check_one_character();
@@ -165,6 +178,7 @@ int main(void)
 	check_full_fifo();
 	check_clock_skip();
 	check_tx_empty_interrupt();
+	check_halfword_receive();
 	printf("%s\n", failures == 0U ? "SELFTEST PASS" : "SELFTEST FAIL");
 	return failures == 0U ? 0 : 1;
 }

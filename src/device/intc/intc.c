@@ -10,6 +10,7 @@
  */
 #include "intc.h"
 #include "std_errno.h"
+#include "mmio_register.h"
 
 #include <string.h>
 
@@ -127,23 +128,18 @@ static void intc_plic_write_register(AthrillAddrType address, uint32 value)
 static Std_ReturnType intc_plic_get8(MpuAddressRegionType *region,
                                      CoreIdType core_id, AthrillAddrType address, uint8 *data)
 {
-	uint32 value = intc_plic_read_register(address & ~3ULL);
-
 	(void)region;
 	(void)core_id;
-	*data = (uint8)(value >> ((address & 3U) * 8U));
+	*data = (uint8)mmio_read(intc_plic_read_register, address, 1U);
 	return STD_E_OK;
 }
 
 static Std_ReturnType intc_plic_get16(MpuAddressRegionType *region,
                                       CoreIdType core_id, AthrillAddrType address, uint16 *data)
 {
-	uint8 low;
-	uint8 high;
-
-	(void)intc_plic_get8(region, core_id, address, &low);
-	(void)intc_plic_get8(region, core_id, address + 1U, &high);
-	*data = (uint16)low | ((uint16)high << 8U);
+	(void)region;
+	(void)core_id;
+	*data = (uint16)mmio_read(intc_plic_read_register, address, 2U);
 	return STD_E_OK;
 }
 
@@ -152,7 +148,7 @@ static Std_ReturnType intc_plic_get32(MpuAddressRegionType *region,
 {
 	(void)region;
 	(void)core_id;
-	*data = intc_plic_read_register(address);
+	*data = mmio_read(intc_plic_read_register, address, 4U);
 	return STD_E_OK;
 }
 
@@ -161,7 +157,7 @@ static Std_ReturnType intc_plic_put8(MpuAddressRegionType *region,
 {
 	(void)region;
 	(void)core_id;
-	intc_plic_write_register(address, data);
+	mmio_write(intc_plic_write_register, address, 1U, data);
 	return STD_E_OK;
 }
 
@@ -170,7 +166,7 @@ static Std_ReturnType intc_plic_put16(MpuAddressRegionType *region,
 {
 	(void)region;
 	(void)core_id;
-	intc_plic_write_register(address, data);
+	mmio_write(intc_plic_write_register, address, 2U, data);
 	return STD_E_OK;
 }
 
@@ -179,7 +175,7 @@ static Std_ReturnType intc_plic_put32(MpuAddressRegionType *region,
 {
 	(void)region;
 	(void)core_id;
-	intc_plic_write_register(address, data);
+	mmio_write(intc_plic_write_register, address, 4U, data);
 	return STD_E_OK;
 }
 
