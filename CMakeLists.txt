@@ -26,7 +26,8 @@ set(RISCV_INCLUDES
     "${ATHRILL_SRC_DIR}/debugger/interaction" "${ATHRILL_SRC_DIR}/debugger/interaction/inc"
     "${ATHRILL_SRC_DIR}/debugger/executor" "${ATHRILL_SRC_DIR}/main"
     "${ATHRILL_TARGET_SOURCE_DIR}/cpu" "${ATHRILL_TARGET_SOURCE_DIR}/cpu/config"
-    "${ATHRILL_TARGET_SOURCE_DIR}/cpu/decode" "${ATHRILL_TARGET_SOURCE_DIR}/cpu/mpu"
+    "${ATHRILL_TARGET_SOURCE_DIR}/cpu/cpu_dec" "${ATHRILL_TARGET_SOURCE_DIR}/cpu/cpu_exec"
+    "${ATHRILL_TARGET_SOURCE_DIR}/cpu/mpu"
     "${ATHRILL_TARGET_SOURCE_DIR}/device" "${ATHRILL_TARGET_SOURCE_DIR}/device/peripheral" "${ATHRILL_TARGET_SOURCE_DIR}/debugger/interaction/inc")
 function(riscv_target name)
   athrill_apply_common_settings(${name})
@@ -42,8 +43,24 @@ add_library(athrill_cui STATIC ${ATHRILL_CUI_SOURCES})
 target_include_directories(athrill_cui PRIVATE "${ATHRILL_SRC_DIR}/debugger/executor/concrete_executor/target")
 riscv_target(athrill_cui)
 
+set(RISCV_CPU_SOURCES
+  src/cpu/config/cpu_config.c
+  src/cpu/cpu_dec/riscv_decode.c
+  src/cpu/cpu_dec/riscv_instruction_table.c
+  src/cpu/cpu_dec/riscv_compressed_table.c
+  src/cpu/cpu_exec/op_exec.c
+  src/cpu/cpu_exec/op_exec_arithm.c
+  src/cpu/cpu_exec/op_exec_logic.c
+  src/cpu/cpu_exec/op_exec_shift.c
+  src/cpu/cpu_exec/op_exec_muldiv.c
+  src/cpu/cpu_exec/op_exec_load.c
+  src/cpu/cpu_exec/op_exec_store.c
+  src/cpu/cpu_exec/op_exec_branch.c
+  src/cpu/cpu_exec/op_exec_system.c
+  src/cpu/mpu/pmp.c)
+
 add_library(athrill_riscv_cpu STATIC
-  src/cpu/config/cpu_config.c src/cpu/decode/riscv_decode.c src/cpu/mpu/pmp.c
+  ${RISCV_CPU_SOURCES}
   "${ATHRILL_SRC_DIR}/lib/dbg_log.c")
 riscv_target(athrill_riscv_cpu)
 
@@ -90,14 +107,20 @@ if(BUILD_TESTING)
   riscv_target(athrill-pmp-test)
   add_test(NAME athrill-pmp COMMAND athrill-pmp-test)
   add_executable(athrill-clock-counter-test test/clock_counter_test.c
-    src/cpu/config/cpu_config.c src/cpu/decode/riscv_decode.c src/cpu/mpu/pmp.c
+    ${RISCV_CPU_SOURCES}
     src/device/device.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
     src/device/peripheral/erbium_plic.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
   add_executable(athrill-decode-benchmark test/decode_benchmark.c
-    src/cpu/config/cpu_config.c src/cpu/decode/riscv_decode.c src/cpu/mpu/pmp.c)
+    ${RISCV_CPU_SOURCES})
   riscv_target(athrill-decode-benchmark)
+  add_executable(athrill-decode-test test/decode_test.c)
+  riscv_target(athrill-decode-test)
+  target_link_libraries(athrill-decode-test PRIVATE athrill_riscv_cpu
+    athrill_riscv_device athrill_bus athrill_mpu athrill_std
+    athrill_riscv_config)
+  add_test(NAME athrill-decode COMMAND athrill-decode-test)
 endif()
 
 message(STATUS "Athrill target: RV64IMC + Zicsr/Zifencei")
