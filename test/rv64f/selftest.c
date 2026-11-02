@@ -1,89 +1,216 @@
+/*
+ * RV64F bare-metal self-test.
+ *
+ * Build with -DERBIUM_MODE=1 for an Athrill built with Erbium behaviour
+ * (the default) and -DERBIUM_MODE=0 for the standard RV64 behaviour.
+ * The mode is fixed at build time so that a wrong behaviour in either
+ * mode fails instead of selecting the other mode's expectations.
+ *
+ * Expected values are worked out by hand from IEEE 754 and the RISC-V
+ * specification. The last line is "SELFTEST PASS" or
+ * "SELFTEST FAIL <count>".
+ */
 #include <stdint.h>
+
+#ifndef ERBIUM_MODE
+#error "build with -DERBIUM_MODE=1 or -DERBIUM_MODE=0"
+#endif
 
 #define SERIAL (*(volatile uint8_t *)0x10000000UL)
 
-static void puts(const char *text)
+#define FFLAG_NX 0x01U
+#define FFLAG_NV 0x10U
+#define FCSR_ERBIUM_INPUT_DENORM 0x80000000U
+
+#define FLOAT_ONE 0x3f800000U
+#define FLOAT_ULP_OF_ONE_HALF 0x33800000U	/* 2^-24: half an ulp of 1.0 */
+#define FLOAT_INFINITY 0x7f800000U
+#define FLOAT_QUIET_NAN 0x7fc00000U
+#define FLOAT_SMALLEST_DENORMAL 0x00000001U
+
+static void test_putc(char c)
 {
-	while (*text != '\0') {
-		SERIAL = (uint8_t)*text++;
-	}
+	SERIAL = (uint8_t)c;
 }
 
-static void result(const char *name, int passed)
-{
-	puts(passed ? "PASS " : "FAIL ");
-	puts(name);
-	puts("\n");
-}
+#include "../common/test_report.h"
 
-static uint32_t add_bits(uint32_t left, uint32_t right, unsigned rm)
+enum rounding_mode {
+	ROUND_RNE,
+	ROUND_RTZ,
+	ROUND_RUP,
+	ROUND_RMM
+};
+
+static uint32_t add_with_rounding(uint32_t left, uint32_t right, enum rounding_mode mode)
 {
 	uint32_t result_bits;
 
-	asm volatile("fmv.w.x f0,%0;fmv.w.x f1,%1" : : "r"(left), "r"(right));
-	if (rm == 0U) {
-		asm volatile("fadd.s f0,f0,f1,rne;fmv.x.w %0,f0" : "=r"(result_bits));
-	}
-	else if (rm == 1U) {
-		asm volatile("fadd.s f0,f0,f1,rtz;fmv.x.w %0,f0" : "=r"(result_bits));
-	}
-	else if (rm == 3U) {
-		asm volatile("fadd.s f0,f0,f1,rup;fmv.x.w %0,f0" : "=r"(result_bits));
-	}
-	else {
-		asm volatile("fadd.s f0,f0,f1,rmm;fmv.x.w %0,f0" : "=r"(result_bits));
+	asm volatile("fmv.w.x f0, %0\n\tfmv.w.x f1, %1" : : "r"(left), "r"(right) : "f0", "f1");
+	switch (mode) {
+	case ROUND_RNE:
+		asm volatile("fadd.s f2, f0, f1, rne\n\tfmv.x.w %0, f2"
+			: "=r"(result_bits) : : "f2");
+		break;
+	case ROUND_RTZ:
+		asm volatile("fadd.s f2, f0, f1, rtz\n\tfmv.x.w %0, f2"
+			: "=r"(result_bits) : : "f2");
+		break;
+	case ROUND_RUP:
+		asm volatile("fadd.s f2, f0, f1, rup\n\tfmv.x.w %0, f2"
+			: "=r"(result_bits) : : "f2");
+		break;
+	default:
+		asm volatile("fadd.s f2, f0, f1, rmm\n\tfmv.x.w %0, f2"
+			: "=r"(result_bits) : : "f2");
+		break;
 	}
 	return result_bits;
 }
 
-static uint64_t cause30_fdiv(void)
+static void check_add_rounding(void)
 {
-	uint64_t old_mtvec;
+	/* 1.0 + 2^-24 lies exactly halfway between 1.0 and 1.0 + 2^-23. */
+	test_check("round rne", add_with_rounding(FLOAT_ONE, FLOAT_ULP_OF_ONE_HALF, ROUND_RNE)
+		== FLOAT_ONE);
+	test_check("round rtz", add_with_rounding(FLOAT_ONE, FLOAT_ULP_OF_ONE_HALF, ROUND_RTZ)
+		== FLOAT_ONE);
+	test_check("round rup", add_with_rounding(FLOAT_ONE, FLOAT_ULP_OF_ONE_HALF, ROUND_RUP)
+		== FLOAT_ONE + 1U);
+	test_check("round rmm", add_with_rounding(FLOAT_ONE, FLOAT_ULP_OF_ONE_HALF, ROUND_RMM)
+		== FLOAT_ONE + 1U);
+}
+
+static int32_t convert_to_int_rmm(uint32_t value_bits, uint32_t *flags)
+{
+	int32_t result;
+
+	asm volatile(
+		"csrw fflags, zero\n\t"
+		"fmv.w.x f0, %2\n\t"
+		"fcvt.w.s %0, f0, rmm\n\t"
+		"csrr %1, fflags"
+		: "=r"(result), "=r"(*flags) : "r"(value_bits) : "f0");
+	return result;
+}
+
+static void check_convert_rmm(void)
+{
+	/* RMM rounds ties away from zero, also for negative values. */
+	static const struct {
+		const char *name;
+		uint32_t value_bits;
+		int32_t expected;
+	} cases[] = {
+		{ "fcvt rmm +0.5", 0x3f000000U, 1 },
+		{ "fcvt rmm -0.5", 0xbf000000U, -1 },
+		{ "fcvt rmm +1.5", 0x3fc00000U, 2 },
+		{ "fcvt rmm -1.5", 0xbfc00000U, -2 },
+		{ "fcvt rmm +2.5", 0x40200000U, 3 },
+		{ "fcvt rmm -2.5", 0xc0200000U, -3 },
+		{ "fcvt rmm -2.25", 0xc0100000U, -2 },
+		{ "fcvt rmm -2.75", 0xc0300000U, -3 },
+	};
+	unsigned index;
+	uint32_t flags;
+	int32_t result;
+
+	for (index = 0U; index < sizeof(cases) / sizeof(cases[0]); index++) {
+		result = convert_to_int_rmm(cases[index].value_bits, &flags);
+		test_check(cases[index].name,
+			result == cases[index].expected && (flags & FFLAG_NX) != 0U);
+	}
+}
+
+static void check_invalid_flag(void)
+{
+	uint32_t flags;
+
+	/* infinity * 0 is invalid. */
+	asm volatile(
+		"csrw fflags, zero\n\t"
+		"fmv.w.x f0, %1\n\t"
+		"fmv.w.x f1, zero\n\t"
+		"fmul.s f2, f0, f1\n\t"
+		"csrr %0, fflags"
+		: "=r"(flags) : "r"(FLOAT_INFINITY) : "f0", "f1", "f2");
+	test_check("invalid flag", (flags & FFLAG_NV) != 0U);
+}
+
+static void check_quiet_nan_class(void)
+{
+	uint32_t class_bits;
+
+	asm volatile("fmv.w.x f0, %1\n\tfclass.s %0, f0"
+		: "=r"(class_bits) : "r"(FLOAT_QUIET_NAN) : "f0");
+	test_check("quiet nan class", class_bits == (1U << 9));
+}
+
+static uint64_t fdiv_trap_cause(void)
+{
+	uint64_t saved_mtvec;
 	uint64_t cause = 0U;
 
 	asm volatile(
-		"csrr %0,mtvec;la t1,1f;csrw mtvec,t1;"
-		"li t0,0x3f800000;fmv.w.x f0,t0;fdiv.s f1,f0,f0;"
-		"j 2f;1:csrr %1,mcause;csrr t0,mepc;addi t0,t0,4;"
-		"csrw mepc,t0;mret;2:csrw mtvec,%0"
-		: "=&r"(old_mtvec), "+r"(cause) : : "t0", "t1", "f0", "f1", "memory");
+		"csrr %0, mtvec\n\t"
+		"la t1, 1f\n\t"
+		"csrw mtvec, t1\n\t"
+		"li t0, 0x3f800000\n\t"
+		"fmv.w.x f0, t0\n\t"
+		"fdiv.s f1, f0, f0\n\t"
+		"j 2f\n"
+		"1:\n\t"
+		"csrr %1, mcause\n\t"
+		"csrr t0, mepc\n\t"
+		"addi t0, t0, 4\n\t"
+		"csrw mepc, t0\n\t"
+		"mret\n"
+		"2:\n\t"
+		"csrw mtvec, %0"
+		: "=&r"(saved_mtvec), "+r"(cause) : : "t0", "t1", "f0", "f1", "memory");
 	return cause;
+}
+
+static void add_smallest_denormal(uint32_t *result_bits, uint32_t *fcsr)
+{
+	asm volatile(
+		"csrw fcsr, zero\n\t"
+		"fmv.w.x f0, %2\n\t"
+		"fmv.w.x f1, zero\n\t"
+		"fadd.s f2, f0, f1\n\t"
+		"fmv.x.w %0, f2\n\t"
+		"csrr %1, fcsr"
+		: "=r"(*result_bits), "=r"(*fcsr) : "r"(FLOAT_SMALLEST_DENORMAL)
+		: "f0", "f1", "f2");
+}
+
+static void check_mode_specific(void)
+{
+	uint64_t cause = fdiv_trap_cause();
+	uint32_t result_bits;
+	uint32_t fcsr;
+
+	add_smallest_denormal(&result_bits, &fcsr);
+#if ERBIUM_MODE
+	/* Erbium has no FDIV.S in hardware and flushes denormal inputs. */
+	test_check("erbium fdiv cause 30", cause == 30U);
+	test_check("erbium denormal flushed", result_bits == 0U);
+	test_check("erbium input denorm flag", (fcsr & FCSR_ERBIUM_INPUT_DENORM) != 0U);
+#else
+	test_check("standard fdiv does not trap", cause == 0U);
+	test_check("standard denormal kept", result_bits == FLOAT_SMALLEST_DENORMAL);
+#endif
 }
 
 int main(void)
 {
-	uint32_t flags;
-	uint32_t value;
-	uint32_t class_value;
-	uint64_t cause;
-
-	asm volatile("li t0,0x6000;csrs mstatus,t0;csrw fcsr,zero" : : : "t0");
-	result("round rne", add_bits(0x3f800000U, 0x33800000U, 0U) == 0x3f800000U);
-	result("round rtz", add_bits(0x3f800000U, 0x33800000U, 1U) == 0x3f800000U);
-	result("round rup", add_bits(0x3f800000U, 0x33800000U, 3U) == 0x3f800001U);
-	result("round rmm", add_bits(0x3f800000U, 0x33800000U, 4U) == 0x3f800001U);
-	asm volatile("csrw fflags,zero;li t0,0x7f800000;fmv.w.x f0,t0;"
-		"fmv.w.x f1,zero;fmul.s f2,f0,f1;csrr %0,fflags"
-		: "=r"(flags) : : "t0", "f0", "f1", "f2");
-	result("invalid flag", (flags & 0x10U) != 0U);
-	asm volatile("li t0,0x7fc00000;fmv.w.x f0,t0;fclass.s %0,f0"
-		: "=r"(class_value) : : "t0", "f0");
-	result("nan boxing", class_value == (1U << 9U));
-	cause = cause30_fdiv();
-	if (cause == 30U) {
-		asm volatile("csrw fflags,zero;li t0,1;fmv.w.x f0,t0;"
-			"fmv.w.x f1,zero;fadd.s f2,f0,f1;fmv.x.w %0,f2;csrr %1,fflags"
-			: "=r"(value), "=r"(flags) : : "t0", "f0", "f1", "f2");
-		result("erbium cause 30", 1);
-		result("erbium denormal", value == 0U && (flags & 0x80000000U) != 0U);
-	}
-	else {
-		result("standard fdiv", cause == 0U);
-		asm volatile("csrw fflags,zero;li t0,1;fmv.w.x f0,t0;"
-			"fmv.w.x f1,zero;fadd.s f2,f0,f1;fmv.x.w %0,f2"
-			: "=r"(value) : : "t0", "f0", "f1", "f2");
-		result("standard denormal", value == 1U);
-	}
-	puts("FP SELFTEST DONE\n");
+	/* mstatus.FS = Initial so F instructions are allowed. */
+	asm volatile("li t0, 0x2000\n\tcsrs mstatus, t0\n\tcsrw fcsr, zero" : : : "t0");
+	check_add_rounding();
+	check_convert_rmm();
+	check_invalid_flag();
+	check_quiet_nan_class();
+	check_mode_specific();
+	test_report_finish();
 	return 0;
 }

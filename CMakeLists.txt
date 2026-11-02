@@ -10,6 +10,12 @@ set(ATHRILL_ADDRESS_WIDTH 64 CACHE STRING "Athrill bus address width" FORCE)
 include("${ATHRILL_SOURCE_DIR}/cmake/AthrillCore.cmake")
 set(ATHRILL_TARGET_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 option(ATHRILL_ENABLE_EXDEV "Enable external device loading" ON)
+option(RISCV_ERBIUM_COMPAT "Model AIFoundry Erbium behaviour (OFF: standard RV64)" ON)
+if(RISCV_ERBIUM_COMPAT)
+  add_compile_definitions(CPU_CONFIG_ERBIUM_COMPAT=1)
+else()
+  add_compile_definitions(CPU_CONFIG_ERBIUM_COMPAT=0)
+endif()
 
 add_library(athrill_riscv_config INTERFACE)
 target_compile_definitions(athrill_riscv_config INTERFACE
@@ -128,8 +134,48 @@ if(BUILD_TESTING)
     athrill_riscv_device athrill_bus athrill_mpu athrill_std
     athrill_riscv_config)
   add_test(NAME athrill-decode COMMAND athrill-decode-test)
+
+  # Firmware tests: build the programs with test/build-firmware.sh into
+  # RISCV_FIRMWARE_DIR (Docker cross toolchain), then re-run CMake.
+  set(RISCV_FIRMWARE_DIR "${CMAKE_BINARY_DIR}/firmware" CACHE PATH
+    "Directory with the bare-metal test programs built by test/build-firmware.sh")
+  set(NUTTX_ELF "" CACHE FILEPATH "NuttX minion:nsh ELF for the NuttX boot test (optional)")
+  find_package(Python3 COMPONENTS Interpreter)
+  set(_runner "${CMAKE_CURRENT_SOURCE_DIR}/test/run_firmware_test.py")
+  set(_erbium "${CMAKE_CURRENT_SOURCE_DIR}/test/erbium")
+  if(Python3_FOUND AND EXISTS "${RISCV_FIRMWARE_DIR}/rv64i-selftest.elf")
+    if(RISCV_ERBIUM_COMPAT)
+      add_test(NAME firmware-rv64i-selftest COMMAND Python3::Interpreter "${_runner}"
+        --athrill $<TARGET_FILE:athrill3>
+        --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64i/memory.txt"
+        --elf "${RISCV_FIRMWARE_DIR}/rv64i-selftest.elf" --clocks 3000000)
+      add_test(NAME firmware-rv64f-selftest COMMAND Python3::Interpreter "${_runner}"
+        --athrill $<TARGET_FILE:athrill3>
+        --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64f/memory.txt"
+        --elf "${RISCV_FIRMWARE_DIR}/rv64f-selftest-erbium.elf" --clocks 3000000)
+      add_test(NAME firmware-erbium-devices COMMAND Python3::Interpreter "${_runner}"
+        --athrill $<TARGET_FILE:athrill3>
+        --memory "${_erbium}/memory.txt" --device-config "${_erbium}/device_config.txt"
+        --elf "${RISCV_FIRMWARE_DIR}/erbium-device-test.elf"
+        --command "serial 0 Z" --command cont --timeout 30)
+    else()
+      add_test(NAME firmware-rv64f-selftest COMMAND Python3::Interpreter "${_runner}"
+        --athrill $<TARGET_FILE:athrill3>
+        --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64f/memory.txt"
+        --elf "${RISCV_FIRMWARE_DIR}/rv64f-selftest-standard.elf" --clocks 3000000)
+    endif()
+  elseif(Python3_FOUND)
+    message(STATUS "Firmware tests skipped: run test/build-firmware.sh ${RISCV_FIRMWARE_DIR}")
+  endif()
+  if(Python3_FOUND AND RISCV_ERBIUM_COMPAT AND NUTTX_ELF AND EXISTS "${NUTTX_ELF}")
+    add_test(NAME firmware-nuttx-nsh COMMAND Python3::Interpreter "${_runner}"
+      --athrill $<TARGET_FILE:athrill3>
+      --memory "${_erbium}/memory.txt" --device-config "${_erbium}/device_config.txt"
+      --elf "${NUTTX_ELF}" --command "serial 0 help\\n" --command cont
+      --expect "Builtin Apps:" --timeout 60)
+  endif()
 endif()
 
-message(STATUS "Athrill target: RV64IMC + Zicsr/Zifencei")
+message(STATUS "Athrill target: RV64IMFC + Zicsr/Zifencei (Erbium compat: ${RISCV_ERBIUM_COMPAT})")
 message(STATUS "Athrill EXDEV: ${ATHRILL_ENABLE_EXDEV}")
 message(STATUS "Athrill Hakoniwa: ${ATHRILL_ENABLE_HAKONIWA}")

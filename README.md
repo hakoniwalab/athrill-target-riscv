@@ -49,17 +49,28 @@ The selected sources are RV32/RV64 I, M, F, C, Zicsr, Zifencei, and system
 instructions. The generated header carries the upstream license text and exact
 provenance.
 
-## RV64I bare-metal test
+## Tests
 
-`test/rv64i` contains a freestanding startup, linker script, memory map,
-self-test, and tight-loop benchmark. Build them in an Ubuntu container with
-`gcc-riscv64-unknown-elf`, then run the self-test with:
+`ctest` runs the host unit tests (usage, PMP, clock counters, decoder). The
+bare-metal programs under `test/` (RV64I and RV64F self-tests, benchmarks,
+Erbium device test) are built with the RISC-V cross toolchain in Docker and
+then registered as CTests automatically:
 
 ```sh
-docker run --rm -v "$PWD/test/rv64i:/work" -w /work ubuntu:24.04 sh -c \
-  'apt-get update -qq && apt-get install -y -qq gcc-riscv64-unknown-elf binutils-riscv64-unknown-elf && ./build.sh /work'
-build/riscv/athrill3 -c1 -m test/rv64i/memory.txt -t10000 test/rv64i/selftest.elf
+docker build -t athrill-riscv-toolchain:ubuntu24 tools/docker
+test/build-firmware.sh build/firmware
+cmake -S . -B build -DNUTTX_ELF=/path/to/nuttx   # NUTTX_ELF is optional
+cmake --build build && (cd build && ctest)
 ```
+
+Each self-test prints `PASS <check>` / `FAIL <check>` lines and ends with
+`SELFTEST PASS` or `SELFTEST FAIL <count>`; `test/run_firmware_test.py`
+fails the CTest unless `SELFTEST PASS` appears with no `FAIL` line. With
+`NUTTX_ELF` set, the NuttX test boots `minion:nsh`, types `help` and
+expects the builtin-app list. `-DRISCV_ERBIUM_COMPAT=OFF` builds the
+standard RV64 behaviour (only the standard FP self-test applies).
+
+riscv-tests can be run with `test/run-riscv-tests.sh <athrill3> <riscv-tests/isa>`.
 
 ## Checkout and build
 
