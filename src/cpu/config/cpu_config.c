@@ -70,9 +70,11 @@ void cpu_mpu_construct_containers(CoreIdType id)
 	(void)id;
 }
 
-static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *length)
+static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *length,
+	std_bool *cacheable)
 {
 	uint8 *p;
+	uint8 *upper;
 	uint16 lo;
 	if ((core->reg.pc & 1U) != 0) {
 		riscv_raise_exception(core, 0, core->reg.pc);
@@ -90,6 +92,7 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
 		return STD_E_OK;
 	}
 	lo = (uint16)p[0] | ((uint16)p[1] << 8);
+	*cacheable = TRUE;
 	*length = ((lo & 3U) == 3U) ? 4U : 2U;
 	*instruction = lo;
 	if (*length == 4U) {
@@ -98,7 +101,19 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
 			core->access_fault = TRUE;
 			return STD_E_OK;
 		}
-		*instruction |= (uint32)p[2] << 16 | (uint32)p[3] << 24;
+		/*
+		 * The upper half is fetched through its own pointer: Athrill keeps
+		 * each memory region in its own buffer, so an instruction may span two
+		 * regions. Unmapped upper half: instruction access fault.
+		 */
+		if (bus_get_pointer(core->core_id, core->reg.pc + 2U, &upper) != STD_E_OK) {
+			riscv_raise_exception(core, 1, core->reg.pc + 2U);
+			core->access_fault = TRUE;
+			return STD_E_OK;
+		}
+		/* The decode cache re-reads all four bytes through one pointer. */
+		*cacheable = (upper == p + 2);
+		*instruction |= (uint32)upper[0] << 16 | (uint32)upper[1] << 24;
 	}
 	return STD_E_OK;
 }
@@ -123,6 +138,7 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 	RiscvDecodedInsn *decoded;
 	uint32 insn;
 	uint8 length;
+	std_bool cacheable;
 	int retired = RISCV_EXEC_TRAP;
 	uint32 interrupt_cause;
 	uint64 trace_pc = core->reg.pc;
@@ -150,7 +166,8 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 			core->decoded_code = NULL;
 			riscv_raise_exception(core, 2, insn);
 		}
-	} else if (!core->is_halt && fetch(core, &insn, &length) == STD_E_OK && !core->access_fault) {
+	} else if (!core->is_halt && fetch(core, &insn, &length, &cacheable) == STD_E_OK
+		&& !core->access_fault) {
 		uint8 *code = NULL;
 		uint32 expanded = insn;
 		if ((length == 4U || riscv_expand_compressed((uint16)insn, &expanded)) &&
@@ -159,6 +176,9 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 			decoded->code = code;
 			decode_cache_remember_permission(core, decoded);
 			retired = decoded->execute(core, decoded);
+			if (!cacheable) {
+				decoded->valid = 0;
+			}
 		} else {
 			decoded->valid = 0;
 			core->decoded_code = NULL;

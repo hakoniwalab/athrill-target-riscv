@@ -148,6 +148,10 @@ if(BUILD_TESTING)
       --athrill $<TARGET_FILE:athrill3>
       --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64i/memory.txt"
       --elf "${RISCV_FIRMWARE_DIR}/pmp-decode-cache-test.elf" --clocks 1000000)
+    add_test(NAME firmware-fetch-boundary COMMAND Python3::Interpreter "${_runner}"
+      --athrill $<TARGET_FILE:athrill3>
+      --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/fetch/memory.txt"
+      --elf "${RISCV_FIRMWARE_DIR}/fetch-boundary-test.elf" --clocks 1000000)
     if(RISCV_ERBIUM_COMPAT)
       add_test(NAME firmware-rv64i-selftest COMMAND Python3::Interpreter "${_runner}"
         --athrill $<TARGET_FILE:athrill3>
