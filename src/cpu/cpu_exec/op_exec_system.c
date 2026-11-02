@@ -18,10 +18,13 @@ int op_exec_fence_i(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 	return op_exec_advance(core, decoded);
 }
 
+/* ECALL causes: 8 from User, 9 from Supervisor, 11 from Machine. */
+#define CAUSE_ECALL_FROM_USER 8U
+
 int op_exec_ecall(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 {
 	(void)decoded;
-	riscv_raise_exception(core, 11U, 0U);
+	riscv_raise_exception(core, CAUSE_ECALL_FROM_USER + (uint64)core->reg.privilege, 0U);
 	return RISCV_EXEC_TRAP;
 }
 
@@ -37,7 +40,10 @@ int op_exec_mret(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 	uint64 status = core->reg.csr.mstatus;
 	uint64 target = core->reg.csr.mepc;
 
-	(void)decoded;
+	if (core->reg.privilege != RISCV_PRIV_M) {
+		riscv_raise_exception(core, 2U, decoded->instruction);
+		return RISCV_EXEC_TRAP;
+	}
 	if ((target & 1U) != 0U) {
 		riscv_raise_exception(core, 0U, target);
 		return RISCV_EXEC_TRAP;
