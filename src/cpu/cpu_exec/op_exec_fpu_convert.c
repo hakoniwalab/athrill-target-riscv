@@ -49,9 +49,16 @@ static long double round_integer(long double value, uint32 rm)
 	if (rm == 0U) {
 		return nearbyintl(value);
 	}
-	lower = floorl(value);
-	fraction = value - lower;
-	return fraction < 0.5L ? lower : lower + 1.0L;
+	/*
+	 * RMM: round to nearest, ties away from zero. Work on the magnitude so
+	 * that negative ties go away from zero too (-2.5 -> -3, not -2).
+	 */
+	lower = floorl(fabsl(value));
+	fraction = fabsl(value) - lower;
+	if (fraction >= 0.5L) {
+		lower += 1.0L;
+	}
+	return copysignl(lower, value);
 }
 
 static int fp_to_integer(
