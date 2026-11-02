@@ -152,22 +152,34 @@ int fp_finish(
 	return op_exec_advance(core, decoded);
 }
 
-uint32 rmm_adjust(long double exact, uint32 rounded_bits)
+/*
+ * RMM (round to nearest, ties away from zero) from a result rounded to
+ * nearest-even: the two differ only when the exact result lies exactly
+ * halfway between two floats, and then RMM takes the one of larger
+ * magnitude. The exact result is passed as an unevaluated sum
+ * exact_high + exact_low of doubles, with exact_high the double nearest to
+ * it. A midpoint between two floats has 25 significant bits and is a
+ * double, so the exact result is a midpoint only if exact_low is 0 and
+ * exact_high is that midpoint.
+ */
+uint32 rmm_adjust(double exact_high, double exact_low, uint32 rounded_bits)
 {
 	float rounded = bits_float(rounded_bits);
 	float neighbor;
-	long double midpoint;
+	double midpoint;
 
-	if (!isfinite(rounded) || isnan((double)exact) || isinf((double)exact) ||
-		exact == (long double)rounded) {
+	if (!isfinite(rounded) || !isfinite(exact_high) || (exact_low != 0.0)) {
 		return rounded_bits;
 	}
-	neighbor = nextafterf(rounded, exact > (long double)rounded ? INFINITY : -INFINITY);
+	if (exact_high == (double)rounded) {
+		return rounded_bits;
+	}
+	neighbor = nextafterf(rounded, exact_high > (double)rounded ? INFINITY : -INFINITY);
 	if (!isfinite(neighbor)) {
 		return rounded_bits;
 	}
-	midpoint = ((long double)rounded + (long double)neighbor) / 2.0L;
-	if ((exact == midpoint) && (fabsl((long double)neighbor) > fabsl((long double)rounded))) {
+	midpoint = ((double)rounded + (double)neighbor) / 2.0;
+	if ((exact_high == midpoint) && (fabsf(neighbor) > fabsf(rounded))) {
 		return float_bits(neighbor);
 	}
 	return rounded_bits;

@@ -18,7 +18,7 @@ static int fp_binary(
 	volatile float left;
 	volatile float right;
 	volatile float result;
-	long double exact;
+	double exact;
 	int rounding;
 
 	rounding = set_rounding(core, decoded);
@@ -30,22 +30,27 @@ static int fp_binary(
 	feclearexcept(FE_ALL_EXCEPT);
 	if (operation == '+') {
 		result = left + right;
-		exact = (long double)left + (long double)right;
+		exact = (double)left + (double)right;
 	}
 	else if (operation == '-') {
 		result = left - right;
-		exact = (long double)left - (long double)right;
+		exact = (double)left - (double)right;
 	}
 	else if (operation == '*') {
 		result = left * right;
-		exact = (long double)left * (long double)right;
+		exact = (double)left * (double)right;
 	}
 	else {
 		result = left / right;
-		exact = (long double)left / (long double)right;
+		exact = (double)left / (double)right;
 	}
+	/*
+	 * In double, +, - and * of two floats are exact, and / is exact
+	 * whenever the quotient is a float midpoint and cannot round onto one
+	 * otherwise (53 >= 2 * 24 + 2 bits), so the low part is 0.
+	 */
 	return fp_finish(core, decoded, rounding == 4 ?
-		rmm_adjust(exact, float_bits(result)) : float_bits(result));
+		rmm_adjust(exact, 0.0, float_bits(result)) : float_bits(result));
 }
 
 static int fp_fused(
@@ -58,7 +63,10 @@ static int fp_fused(
 	float right;
 	float addend;
 	float result;
-	long double exact;
+	double product;
+	double exact_high;
+	double exact_low;
+	double addend_part;
 	int rounding;
 
 	rounding = set_rounding(core, decoded);
@@ -76,9 +84,20 @@ static int fp_fused(
 	}
 	feclearexcept(FE_ALL_EXCEPT);
 	result = fmaf(left, right, addend);
-	exact = fmal((long double)left, (long double)right, (long double)addend);
-	return fp_finish(core, decoded, rounding == 4 ?
-		rmm_adjust(exact, float_bits(result)) : float_bits(result));
+	if (rounding != 4) {
+		return fp_finish(core, decoded, float_bits(result));
+	}
+	/*
+	 * The exact left * right + addend may need more than 53 bits, so it is
+	 * kept as exact_high + exact_low: the product of two floats is exact in
+	 * double, and TwoSum (round to nearest, set for RMM) splits the sum
+	 * into its rounded value and the exact rounding error.
+	 */
+	product = (double)left * (double)right;
+	exact_high = product + (double)addend;
+	addend_part = exact_high - product;
+	exact_low = (product - (exact_high - addend_part)) + ((double)addend - addend_part);
+	return fp_finish(core, decoded, rmm_adjust(exact_high, exact_low, float_bits(result)));
 }
 
 int op_exec_flw(TargetCoreType *core, const RiscvDecodedInsn *decoded)
@@ -177,5 +196,5 @@ int op_exec_fsqrt_s(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 	feclearexcept(FE_ALL_EXCEPT);
 	result = sqrtf(value);
 	return fp_finish(core, decoded, rounding == 4 ?
-		rmm_adjust(sqrtl((long double)value), float_bits(result)) : float_bits(result));
+		rmm_adjust(sqrt((double)value), 0.0, float_bits(result)) : float_bits(result));
 }

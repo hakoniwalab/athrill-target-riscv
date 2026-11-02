@@ -81,6 +81,43 @@ static void check_add_rounding(void)
 		== FLOAT_ONE + 1U);
 }
 
+static uint32_t fused_multiply_add_rmm(uint32_t left, uint32_t right, uint32_t addend)
+{
+	uint32_t result_bits;
+
+	asm volatile(
+		"fmv.w.x f0, %1\n\t"
+		"fmv.w.x f1, %2\n\t"
+		"fmv.w.x f2, %3\n\t"
+		"fmadd.s f3, f0, f1, f2, rmm\n\t"
+		"fmv.x.w %0, f3"
+		: "=r"(result_bits) : "r"(left), "r"(right), "r"(addend) : "f0", "f1", "f2", "f3");
+	return result_bits;
+}
+
+static void check_fused_rmm(void)
+{
+	/*
+	 * (1 + 2^-23) * (1 - 2^-24) = 1 + 2^-24 - 2^-47, just below the
+	 * midpoint 1 + 2^-24 between 1.0 and 1.0 + 2^-23. The addend moves the
+	 * exact result onto the midpoint or by 2^-71 / 2^-70 next to it; those
+	 * offsets are below double precision, so only an exact tie test can
+	 * tell them apart.
+	 */
+	const uint32_t one_plus_ulp = 0x3f800001U;	/* 1 + 2^-23 */
+	const uint32_t one_minus_half_ulp = 0x3f7fffffU;	/* 1 - 2^-24 */
+
+	test_check("fmadd rmm exact tie rounds away",
+		fused_multiply_add_rmm(one_plus_ulp, one_minus_half_ulp, 0x28000000U)	/* 2^-47 */
+			== one_plus_ulp);
+	test_check("fmadd rmm just below the tie rounds down",
+		fused_multiply_add_rmm(one_plus_ulp, one_minus_half_ulp, 0x27ffffffU)	/* 2^-47 - 2^-71 */
+			== FLOAT_ONE);
+	test_check("fmadd rmm just above the tie rounds up",
+		fused_multiply_add_rmm(one_plus_ulp, one_minus_half_ulp, 0x28000001U)	/* 2^-47 + 2^-70 */
+			== one_plus_ulp);
+}
+
 static int32_t convert_to_int_rmm(uint32_t value_bits, uint32_t *flags)
 {
 	int32_t result;
@@ -208,6 +245,7 @@ int main(void)
 	asm volatile("li t0, 0x2000\n\tcsrs mstatus, t0\n\tcsrw fcsr, zero" : : : "t0");
 	check_add_rounding();
 	check_convert_rmm();
+	check_fused_rmm();
 	check_invalid_flag();
 	check_quiet_nan_class();
 	check_mode_specific();

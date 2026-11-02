@@ -22,6 +22,6 @@ uint32 fp_read(TargetCoreType *core, uint8 reg);
 void fp_write(TargetCoreType *core, uint8 reg, uint32 bits);
 int set_rounding(TargetCoreType *core, const RiscvDecodedInsn *decoded);
 int fp_finish(TargetCoreType *core, const RiscvDecodedInsn *decoded, uint32 bits);
-uint32 rmm_adjust(long double exact, uint32 rounded_bits);
+uint32 rmm_adjust(double exact_high, double exact_low, uint32 rounded_bits);
 
 #endif
