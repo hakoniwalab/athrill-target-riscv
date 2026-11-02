@@ -4,6 +4,8 @@
 Usage: tools/generate_riscv_opcodes.py /path/to/riscv-opcodes
 Pinned upstream commit: f24ac23ec9fa947011781a09cd6fd25a7c36dc45
 """
+import ast
+import csv
 import json
 import os
 import pathlib
@@ -25,19 +27,44 @@ fmv_x_w feq_s flt_s fle_s fclass_s fcvt_s_w fcvt_s_wu fmv_w_x
 fcvt_l_s fcvt_lu_s fcvt_s_l fcvt_s_lu""".split()
 
 # riscv-opcodes describes compressed encodings but not their base-ISA expansion.
-# These are the hand-maintained semantic relations used by the C template.
+# This is the complete hand-maintained semantic bridge: base mnemonic, rd, rs1,
+# rs2, and immediate kind.  Register values are either an upstream compressed
+# field, an implied architectural register, or absent.  All bit locations,
+# masks, matches, and immediate layouts come from riscv-opcodes.
 COMPRESSED_EXPANSIONS = {
-    "c_addi4spn": "addi", "c_lw": "lw", "c_ld": "ld",
-    "c_sw": "sw", "c_sd": "sd", "c_nop": "addi",
-    "c_addi": "addi", "c_addiw": "addiw", "c_li": "addi",
-    "c_addi16sp": "addi", "c_lui": "lui", "c_srli": "srli",
-    "c_srai": "srai", "c_andi": "andi", "c_sub": "sub",
-    "c_xor": "xor", "c_or": "or", "c_and": "and",
-    "c_subw": "subw", "c_addw": "addw", "c_j": "jal",
-    "c_beqz": "beq", "c_bnez": "bne", "c_slli": "slli",
-    "c_lwsp": "lw", "c_ldsp": "ld", "c_jr": "jalr",
-    "c_mv": "add", "c_ebreak": "ebreak", "c_jalr": "jalr",
-    "c_add": "add", "c_swsp": "sw", "c_sdsp": "sd",
+    "c_addi4spn": ("addi", "rd_p", 2, None, "I"),
+    "c_lw": ("lw", "rd_p", "rs1_p", None, "I"),
+    "c_ld": ("ld", "rd_p", "rs1_p", None, "I"),
+    "c_sw": ("sw", None, "rs1_p", "rs2_p", "S"),
+    "c_sd": ("sd", None, "rs1_p", "rs2_p", "S"),
+    "c_nop": ("addi", 0, 0, None, "I"),
+    "c_addi": ("addi", "rd_rs1_n0", "rd_rs1_n0", None, "I"),
+    "c_addiw": ("addiw", "rd_rs1_n0", "rd_rs1_n0", None, "I"),
+    "c_li": ("addi", "rd_n0", 0, None, "I"),
+    "c_addi16sp": ("addi", 2, 2, None, "I"),
+    "c_lui": ("lui", "rd_n2", None, None, "U"),
+    "c_srli": ("srli", "rd_rs1_p", "rd_rs1_p", None, "I"),
+    "c_srai": ("srai", "rd_rs1_p", "rd_rs1_p", None, "I"),
+    "c_andi": ("andi", "rd_rs1_p", "rd_rs1_p", None, "I"),
+    "c_sub": ("sub", "rd_rs1_p", "rd_rs1_p", "rs2_p", "NONE"),
+    "c_xor": ("xor", "rd_rs1_p", "rd_rs1_p", "rs2_p", "NONE"),
+    "c_or": ("or", "rd_rs1_p", "rd_rs1_p", "rs2_p", "NONE"),
+    "c_and": ("and", "rd_rs1_p", "rd_rs1_p", "rs2_p", "NONE"),
+    "c_subw": ("subw", "rd_rs1_p", "rd_rs1_p", "rs2_p", "NONE"),
+    "c_addw": ("addw", "rd_rs1_p", "rd_rs1_p", "rs2_p", "NONE"),
+    "c_j": ("jal", 0, None, None, "J"),
+    "c_beqz": ("beq", None, "rs1_p", 0, "B"),
+    "c_bnez": ("bne", None, "rs1_p", 0, "B"),
+    "c_slli": ("slli", "rd_rs1_n0", "rd_rs1_n0", None, "I"),
+    "c_lwsp": ("lw", "rd_n0", 2, None, "I"),
+    "c_ldsp": ("ld", "rd_n0", 2, None, "I"),
+    "c_jr": ("jalr", 0, "rs1_n0", None, "I"),
+    "c_mv": ("add", "rd_n0", 0, "c_rs2_n0", "NONE"),
+    "c_ebreak": ("ebreak", None, None, None, "NONE"),
+    "c_jalr": ("jalr", 1, "c_rs1_n0", None, "I"),
+    "c_add": ("add", "rd_rs1_n0", "rd_rs1_n0", "c_rs2_n0", "NONE"),
+    "c_swsp": ("sw", None, 2, "c_rs2", "S"),
+    "c_sdsp": ("sd", None, 2, "c_rs2", "S"),
 }
 
 
@@ -101,15 +128,121 @@ def write_table(path, instructions, header):
     path.write_text("".join(lines))
 
 
-def write_compressed(path, instructions, header):
-    """Write the RV64C expander after validating its upstream definitions."""
+def load_upstream_fields(root):
+    """Return compressed source ranges and documented immediate bit layouts."""
+    with (root / "arg_lut.csv").open(newline="") as stream:
+        ranges = {row[0]: (int(row[2]), int(row[1]))
+                  for row in csv.reader(stream)}
+    tree = ast.parse((root / "src/riscv_opcodes/constants.py").read_text())
+    latex = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(target, ast.Name) and target.id == "latex_mapping"
+                for target in node.targets):
+            latex = ast.literal_eval(node.value)
+            break
+    return ranges, latex
+
+
+def immediate_slices(fields, ranges, latex):
+    slices = []
+    width = 0
+    nonzero = False
+    signed = False
+    for field in fields:
+        if field not in latex or "imm[" not in latex[field]:
+            continue
+        source_lo, source_hi = ranges[field]
+        prefix, bits = latex[field].split("[", 1)
+        bits = bits.split("]", 1)[0]
+        signed |= "uimm" not in prefix
+        parts = bits.replace("$\\vert$", "|").split("|")
+        source = source_hi
+        for part in parts:
+            bounds = [int(value) for value in part.split(":")]
+            dest_hi = bounds[0]
+            dest_lo = bounds[-1]
+            count = dest_hi - dest_lo + 1
+            slices.append((source - count + 1, dest_lo, count))
+            source -= count
+            width = max(width, dest_hi + 1)
+        nonzero |= "nz" in latex[field].split("[", 1)[0]
+    return slices, width if signed else 0, nonzero
+
+
+def register_recipe(value, ranges):
+    if value is None:
+        return ("RISCV_COMPRESSED_REGISTER_NONE", 0, 0)
+    if isinstance(value, int):
+        return ("RISCV_COMPRESSED_REGISTER_FIXED", value, 0)
+    lo, hi = ranges[value]
+    kind = ("RISCV_COMPRESSED_REGISTER_PRIME" if value.endswith("_p") else
+            "RISCV_COMPRESSED_REGISTER_FIELD")
+    return (kind, lo, hi - lo + 1)
+
+
+def write_compressed(path, instructions, header, ranges, latex):
+    """Write RV64C expansion rows entirely from upstream encoding metadata."""
     missing = sorted(name for name in COMPRESSED_EXPANSIONS
                      if name not in instructions)
     if missing:
         raise SystemExit("missing compressed definitions: " + ", ".join(missing))
-    template = pathlib.Path(__file__).with_name(
-        "riscv_compressed_table.c.in").read_text()
-    path.write_text(header + template.rstrip() + "\n")
+    entries = []
+    for name, semantic in COMPRESSED_EXPANSIONS.items():
+        data = instructions[name]
+        base, rd, rs1, rs2, kind = semantic
+        slices, width, nonzero = immediate_slices(
+            data["variable_fields"], ranges, latex)
+        # RV64 shift amount zero is legal.  c.nop's zero immediate is its
+        # canonical encoding, despite the shared upstream nz field name.
+        if name in ("c_nop", "c_addi", "c_srli", "c_srai", "c_slli"):
+            nonzero = False
+        regs = [register_recipe(value, ranges) for value in (rd, rs1, rs2)]
+        scale = min((destination for _, destination, _ in slices), default=0)
+        invalid = ["RISCV_COMPRESSED_INVALID_IMMEDIATE"] if nonzero else []
+        if isinstance(rd, str) and rd.endswith("n0") and name != "c_addi":
+            invalid.append("RISCV_COMPRESSED_INVALID_RD_ZERO")
+        if rd == "rd_n2":
+            invalid += ["RISCV_COMPRESSED_INVALID_RD_ZERO",
+                        "RISCV_COMPRESSED_INVALID_RD_X2"]
+        if isinstance(rs1, str) and rs1.endswith("n0") and name != "c_addi":
+            invalid.append("RISCV_COMPRESSED_INVALID_RS1_ZERO")
+        if isinstance(rs2, str) and rs2.endswith("n0"):
+            invalid.append("RISCV_COMPRESSED_INVALID_RS2_ZERO")
+        invalid_value = " | ".join(invalid) if invalid else "0U"
+        lines = ["\t{", f"\t\t{data['mask']}U, {data['match']}U, "
+                 f"{instructions[base]['match']}U,",
+                 f"\t\t{{{{{regs[0][0]}, {regs[0][1]}U, {regs[0][2]}U}},",
+                 f"\t\t {{{regs[1][0]}, {regs[1][1]}U, {regs[1][2]}U}},",
+                 f"\t\t {{{regs[2][0]}, {regs[2][1]}U, {regs[2][2]}U}}}},",
+                 f"\t\tRISCV_IMMEDIATE_{kind}, {width}U, {scale}U, "
+                 f"{invalid_value}, "
+                 f"{len(slices)}U,",
+                 "\t\t{" + ", ".join(
+                     f"{{{src}U, {dst}U, {count}U}}"
+                     for src, dst, count in slices) + "}", "\t}"]
+        key = ((int(data["match"], 16) >> 13) << 2) | \
+              (int(data["match"], 16) & 3)
+        entries.append((key, int(data["mask"], 16).bit_count(),
+                        "\n".join(lines)))
+    entries.sort(key=lambda item: (item[0], -item[1]))
+    ranges_by_key = []
+    for key in range(32):
+        indices = [index for index, entry in enumerate(entries)
+                   if entry[0] == key]
+        start = indices[0] if indices else 0
+        ranges_by_key.append((start, len(indices)))
+    body = [header, '#include "riscv_decode.h"\n\n',
+            "const RiscvCompressedEntry riscv_compressed_table[] = {\n",
+            ",\n".join(entry for _, _, entry in entries), "\n};\n\n",
+            "const uint32 riscv_compressed_table_count =\n",
+            "\t(uint32)(sizeof(riscv_compressed_table) /\n",
+            "\t\tsizeof(riscv_compressed_table[0]));\n\n",
+            "const uint8 riscv_compressed_ranges[32][2] = {\n\t",
+            ",\n\t".join(f"{{{start}U, {count}U}}"
+                           for start, count in ranges_by_key),
+            "\n};\n"]
+    path.write_text("".join(body))
 
 
 def main():
@@ -134,8 +267,9 @@ def main():
         "\n".join(definitions) + "\n\n#endif\n")
     instructions = json.loads((root / "instr_dict.json").read_text())
     write_table(destination / "riscv_instruction_table.c", instructions, header)
+    ranges, latex = load_upstream_fields(root)
     write_compressed(destination / "riscv_compressed_table.c", instructions,
-                     header)
+                     header, ranges, latex)
 
 
 if __name__ == "__main__":

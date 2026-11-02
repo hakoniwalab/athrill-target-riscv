@@ -14,6 +14,115 @@ static uint64 sign_extend(uint64 value, uint32 width)
 	return (uint64)((sint64)(value << shift) >> shift);
 }
 
+static uint32 compressed_register(
+	uint16 instruction,
+	const RiscvCompressedRegister *recipe)
+{
+	uint32 mask;
+	uint32 value;
+
+	if (recipe->kind == RISCV_COMPRESSED_REGISTER_NONE) {
+		return 0U;
+	}
+	if (recipe->kind == RISCV_COMPRESSED_REGISTER_FIXED) {
+		return recipe->value;
+	}
+	mask = (1U << recipe->width) - 1U;
+	value = ((uint32)instruction >> recipe->value) & mask;
+	if (recipe->kind == RISCV_COMPRESSED_REGISTER_PRIME) {
+		value += 8U;
+	}
+	return value;
+}
+
+static uint32 encode_compressed_immediate(uint32 value, uint8 kind)
+{
+	switch (kind) {
+	case RISCV_IMMEDIATE_I:
+		return (value & 0xfffU) << 20U;
+	case RISCV_IMMEDIATE_S:
+		return ((value & 0xfe0U) << 20U) |
+			((value & 0x1fU) << 7U);
+	case RISCV_IMMEDIATE_B:
+		return ((value & 0x1000U) << 19U) |
+			((value & 0x7e0U) << 20U) |
+			((value & 0x1eU) << 7U) |
+			((value & 0x800U) >> 4U);
+	case RISCV_IMMEDIATE_U:
+		return value & 0xfffff000U;
+	case RISCV_IMMEDIATE_J:
+		return ((value & 0x100000U) << 11U) |
+			(value & 0xff000U) |
+			((value & 0x800U) << 9U) |
+			((value & 0x7feU) << 20U);
+	default:
+		return 0U;
+	}
+}
+
+std_bool riscv_expand_compressed(uint16 instruction, uint32 *expanded)
+{
+	const RiscvCompressedEntry *entry;
+	uint32 immediate;
+	uint32 index;
+	uint32 limit;
+	uint32 mask;
+	uint32 rd;
+	uint32 rs1;
+	uint32 rs2;
+	uint32 slice;
+
+	index = (((uint32)instruction >> 13U) << 2U) | (instruction & 3U);
+	limit = riscv_compressed_ranges[index][0] +
+		riscv_compressed_ranges[index][1];
+	index = riscv_compressed_ranges[index][0];
+	for (; index < limit; index++) {
+		entry = &riscv_compressed_table[index];
+		if ((instruction & entry->mask) != entry->match) {
+			continue;
+		}
+		immediate = 0U;
+		for (slice = 0U; slice < entry->slice_count; slice++) {
+			mask = (1U << entry->slices[slice].width) - 1U;
+			immediate |= (((uint32)instruction >>
+				entry->slices[slice].source) & mask) <<
+				entry->slices[slice].destination;
+		}
+		if (((entry->invalid & RISCV_COMPRESSED_INVALID_IMMEDIATE) != 0U) &&
+			(immediate == 0U)) {
+			return FALSE;
+		}
+		if ((entry->immediate_width != 0U) &&
+			((immediate & (1U << (entry->immediate_width - 1U))) != 0U)) {
+			immediate |= ~((1U << entry->immediate_width) - 1U);
+		}
+		rd = compressed_register(instruction, &entry->registers[0]);
+		rs1 = compressed_register(instruction, &entry->registers[1]);
+		rs2 = compressed_register(instruction, &entry->registers[2]);
+		if (((entry->invalid & RISCV_COMPRESSED_INVALID_RD_ZERO) != 0U) &&
+			(rd == 0U)) {
+			return FALSE;
+		}
+		if (((entry->invalid & RISCV_COMPRESSED_INVALID_RD_X2) != 0U) &&
+			(rd == 2U)) {
+			return FALSE;
+		}
+		if (((entry->invalid & RISCV_COMPRESSED_INVALID_RS1_ZERO) != 0U) &&
+			(rs1 == 0U)) {
+			return FALSE;
+		}
+		if (((entry->invalid & RISCV_COMPRESSED_INVALID_RS2_ZERO) != 0U) &&
+			(rs2 == 0U)) {
+			return FALSE;
+		}
+		*expanded = entry->base | (rd << 7U) | (rs1 << 15U) |
+			(rs2 << 20U) |
+			encode_compressed_immediate(immediate, entry->immediate_kind);
+		return TRUE;
+	}
+	return FALSE;
+}
+
 static uint64 decode_immediate(uint32 instruction, uint8 kind)
 {
 	uint64 value;
