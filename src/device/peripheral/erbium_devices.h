@@ -4,11 +4,21 @@
 #include "std_errno.h"
 #include "mpu_types.h"
 #include "std_device_ops.h"
-extern MpuAddressRegionOperationType erbium_sysreg_ops, erbium_uart_ops, erbium_timer_ops, erbium_plic_ops;
-extern uint8 erbium_sysreg_data[0x1000], erbium_uart_data[0x100], erbium_timer_data[0x10], erbium_plic_data[0x200008];
+#include "intc.h"
+
+extern MpuAddressRegionOperationType erbium_sysreg_ops;
+extern MpuAddressRegionOperationType erbium_uart_ops;
+extern MpuAddressRegionOperationType erbium_timer_ops;
+extern uint8 erbium_sysreg_data[0x1000];
+extern uint8 erbium_uart_data[0x100];
+extern uint8 erbium_timer_data[0x10];
 void erbium_devices_reset(void);
 void erbium_devices_supply_clock(DeviceClockType *clock);
-void erbium_plic_set_source(unsigned source, std_bool active);
+void erbium_sysreg_reset(void);
+void erbium_uart_reset(void);
+void erbium_uart_tick(void);
+void erbium_timer_reset(void);
+void erbium_timer_tick(DeviceClockType *clock);
 Std_ReturnType erbium_uart_receive(uint8 data);
 void erbium_timer_configure(uint32 cpu_frequency, uint32 timer_frequency);
 #endif

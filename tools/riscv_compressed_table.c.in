@@ -1,0 +1,235 @@
+#include "riscv_decode.h"
+#include "riscv_encoding.h"
+
+#define SEXT(value, bits) \
+	((uint64)((sint64)((uint64)(value) << (64U - (bits))) >> \
+		(64U - (bits))))
+
+static uint32 ci(uint32 op, uint32 f, uint32 rd, uint32 r1, uint32 im)
+{
+	return ((im & 0xfffU) << 20) | (r1 << 15) | (f << 12) | (rd << 7) | op;
+}
+static uint32 cr(uint32 f7, uint32 f, uint32 rd, uint32 r1, uint32 r2,
+                 uint32 op)
+{
+	return (f7 << 25) | (r2 << 20) | (r1 << 15) | (f << 12) | (rd << 7) | op;
+}
+static uint32 cs(uint32 f, uint32 r1, uint32 r2, uint32 im)
+{
+	return ((im & 0xfe0U) << 20) | (r2 << 20) | (r1 << 15) | (f << 12) | ((
+	            im & 31U) << 7) | 0x23U;
+}
+static uint32 cb(uint32 f, uint32 r1, uint32 im)
+{
+	return ((im & 0x1000U) << 19) | ((im & 0x7e0U) << 20) | (r1 << 15) |
+	       (f << 12) | ((im & 0x1eU) << 7) | ((im & 0x800U) >> 4) | 0x63U;
+}
+static uint32 cj(uint32 im)
+{
+	return ((im & 0x100000U) << 11) | (im & 0xff000U) | ((im & 0x800U) << 9) | ((
+	            im & 0x7feU) << 20) | 0x6fU;
+}
+std_bool riscv_expand_compressed(uint16 c, uint32*o)
+{
+	uint32 q = c & 3U, f = c >> 13, rd = (c >> 7) & 31U, r2 = (c >> 2) & 31U,
+	       rp = 8 + ((c >> 7) & 7U), r2p = 8 + ((c >> 2) & 7U),
+	       im = ((c >> 2) & 31U) | ((c >> 7) & 32U);
+	if (q == 0)
+	{
+		uint32 u = ((c >> 7) & 0x38U) | ((c << 1)&0x40U)|((c>>4) & 4U);
+		if (f == 0)
+		{
+			u = ((c >> 7) & 0x30U) | ((c >> 1) & 0x3c0U) | ((c >> 4) & 4U) | ((
+			        c >> 2) & 8U);
+			if (!u)
+			{
+				return FALSE;
+			}
+			*o = ci(0x13, 0, r2p, 2, u);
+			return TRUE;
+		}
+		if (f == 2 || f == 3)
+		{
+			if (f == 3)
+			{
+				u = ((c >> 7) & 0x38U) | ((c << 1) & 0xc0U);
+			}
+			*o = ci(3, f == 2 ? 2 : 3, r2p, rp, u);
+			return TRUE;
+		}
+		if (f == 6 || f == 7)
+		{
+			if (f == 7)
+			{
+				u = ((c >> 7) & 0x38U) | ((c << 1) & 0xc0U);
+			}
+			*o = cs(f == 6 ? 2 : 3, rp, r2p, u);
+			return TRUE;
+		}
+		return FALSE;
+	}
+	if (q == 1)
+	{
+		if (f == 0)
+		{
+			*o = ci(0x13, 0, rd, rd, (uint32)SEXT(im, 6));
+			return TRUE;
+		}
+		if (f == 1 && rd)
+		{
+			*o = ci(0x1b, 0, rd, rd, (uint32)SEXT(im, 6));
+			return TRUE;
+		}
+		if (f == 2 && rd)
+		{
+			*o = ci(0x13, 0, rd, 0, (uint32)SEXT(im, 6));
+			return TRUE;
+		}
+		if (f == 3)
+		{
+			if (rd == 2)
+			{
+				im = ((c >> 3) & 0x200U) | ((c >> 2) & 0x10U) | ((c << 1) & 0x40U) | ((
+				        c << 4) & 0x180U) | ((c << 3) & 0x20U);
+				if (!im)
+				{
+					return FALSE;
+				}
+				*o = ci(0x13, 0, 2, 2, (uint32)SEXT(im, 10));
+				return TRUE;
+			}
+			if (!rd || rd == 2 || !im)
+			{
+				return FALSE;
+			}
+			*o = ((uint32)SEXT(im, 6) << 12) | (rd << 7) | 0x37U;
+			return TRUE;
+		}
+		if (f == 4)
+		{
+			uint32 x = (c >> 10) & 3U;
+			uint32 funct3;
+			uint32 funct7;
+			if (x < 2)
+			{
+				uint32 sh = ((c >> 2) & 31U) | ((c >> 7) & 32U);
+				*o = ci(0x13, 5, rp, rp, sh | (x ? 0x400U : 0));
+				return TRUE;
+			}
+			if (x == 2)
+			{
+				*o = ci(0x13, 7, rp, rp, (uint32)SEXT(im, 6));
+				return TRUE;
+			}
+			x = (c >> 5) & 3U;
+			funct7 = x ? 0U : 0x20U;
+			if (c & 0x1000U)
+			{
+				if (x > 1)
+				{
+					return FALSE;
+				}
+				*o = cr(funct7, 0, rp, rp, r2p, 0x3b);
+				return TRUE;
+			}
+			funct3 = 0U;
+			if (x == 1U)
+			{
+				funct3 = 4U;
+			}
+			else if (x == 2U)
+			{
+				funct3 = 6U;
+			}
+			else if (x == 3U)
+			{
+				funct3 = 7U;
+			}
+			*o = cr(funct7, funct3, rp, rp, r2p, 0x33);
+			return TRUE;
+		}
+		if (f == 5)
+		{
+			im = ((c >> 1) & 0x800U) | ((c >> 7) & 0x10U) | ((c >> 1) & 0x300U) | ((
+			        c << 2)&0x400U)|((c>>1)&0x40U)|((c<<1) & 0x80U) | ((c >> 2) & 0xeU) | ((
+			                c << 3) & 0x20U);
+			*o = cj((uint32)SEXT(im, 12));
+			return TRUE;
+		}
+		if (f == 6 || f == 7)
+		{
+			im = ((c >> 4) & 0x100U) | ((c >> 7) & 0x18U) | ((c << 1) & 0xc0U) | ((
+			        c >> 2) & 6U) | ((c << 3) & 0x20U);
+			*o = cb(f == 6 ? 0 : 1, rp, (uint32)SEXT(im, 9));
+			return TRUE;
+		}
+		return FALSE;
+	}
+	if (q == 2)
+	{
+		if (f == 0 && rd)
+		{
+			*o = ci(0x13, 1, rd, rd, im);
+			return TRUE;
+		}
+		if ((f == 2 || f == 3) && rd)
+		{
+			if (f == 2U)
+			{
+				im = ((c >> 2) & 0x1cU) | ((c >> 7) & 0x20U);
+				im |= (c << 4) & 0xc0U;
+			}
+			else
+			{
+				im = ((c >> 2) & 0x18U) | ((c >> 7) & 0x20U);
+				im |= (c << 4) & 0x1c0U;
+			}
+			*o = ci(3, f == 2 ? 2 : 3, rd, 2, im);
+			return TRUE;
+		}
+		if (f == 4)
+		{
+			if (!(c & 0x1000U))
+			{
+				if (!r2 && rd)
+				{
+					*o = ci(0x67, 0, 0, rd, 0);
+				}
+				else if (rd)
+				{
+					*o = cr(0, 0, rd, 0, r2, 0x33);
+				}
+				else
+				{
+					return FALSE;
+				}
+			}
+			else if (!rd && !r2)
+			{
+				*o = MATCH_EBREAK;
+			}
+			else if (!r2 && rd)
+			{
+				*o = ci(0x67, 0, 1, rd, 0);
+			}
+			else if (rd)
+			{
+				*o = cr(0, 0, rd, rd, r2, 0x33);
+			}
+			else
+			{
+				return FALSE;
+			}
+			return TRUE;
+		}
+		if (f == 6 || f == 7)
+		{
+			im = f == 6 ? (((c >> 7) & 0x3cU) | ((c >> 1) & 0xc0U)) : (((
+			        c >> 7) & 0x38U) | ((c >> 1) & 0x1c0U));
+			*o = cs(f == 6 ? 2 : 3, 2, r2, im);
+			return TRUE;
+		}
+	}
+	return FALSE;
+}
+

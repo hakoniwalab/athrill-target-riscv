@@ -1,3 +1,8 @@
+/*
+ * Erbium system-register map (base 0x02000000):
+ *   0x00 platform identifier, 0x08 platform revision
+ *   other offsets are byte-addressable backing storage
+ */
 #include "erbium_devices.h"
 
 #include <string.h>
@@ -7,10 +12,10 @@
 uint8 erbium_sysreg_data[0x1000];
 
 static Std_ReturnType get8(
-	MpuAddressRegionType *region,
-	CoreIdType core_id,
-	AthrillAddrType address,
-	uint8 *data)
+    MpuAddressRegionType *region,
+    CoreIdType core_id,
+    AthrillAddrType address,
+    uint8 *data)
 {
 	(void)region;
 	(void)core_id;
@@ -19,10 +24,10 @@ static Std_ReturnType get8(
 }
 
 static Std_ReturnType get16(
-	MpuAddressRegionType *region,
-	CoreIdType core_id,
-	AthrillAddrType address,
-	uint16 *data)
+    MpuAddressRegionType *region,
+    CoreIdType core_id,
+    AthrillAddrType address,
+    uint16 *data)
 {
 	uint8 low;
 	uint8 high;
@@ -34,10 +39,10 @@ static Std_ReturnType get16(
 }
 
 static Std_ReturnType get32(
-	MpuAddressRegionType *region,
-	CoreIdType core_id,
-	AthrillAddrType address,
-	uint32 *data)
+    MpuAddressRegionType *region,
+    CoreIdType core_id,
+    AthrillAddrType address,
+    uint32 *data)
 {
 	uint16 low;
 	uint16 high;
@@ -49,10 +54,10 @@ static Std_ReturnType get32(
 }
 
 static Std_ReturnType put8(
-	MpuAddressRegionType *region,
-	CoreIdType core_id,
-	AthrillAddrType address,
-	uint8 data)
+    MpuAddressRegionType *region,
+    CoreIdType core_id,
+    AthrillAddrType address,
+    uint8 data)
 {
 	(void)region;
 	(void)core_id;
@@ -61,10 +66,10 @@ static Std_ReturnType put8(
 }
 
 static Std_ReturnType put16(
-	MpuAddressRegionType *region,
-	CoreIdType core_id,
-	AthrillAddrType address,
-	uint16 data)
+    MpuAddressRegionType *region,
+    CoreIdType core_id,
+    AthrillAddrType address,
+    uint16 data)
 {
 	(void)put8(region, core_id, address, (uint8)data);
 	(void)put8(region, core_id, address + 1U, (uint8)(data >> 8U));
@@ -72,10 +77,10 @@ static Std_ReturnType put16(
 }
 
 static Std_ReturnType put32(
-	MpuAddressRegionType *region,
-	CoreIdType core_id,
-	AthrillAddrType address,
-	uint32 data)
+    MpuAddressRegionType *region,
+    CoreIdType core_id,
+    AthrillAddrType address,
+    uint32 data)
 {
 	(void)put16(region, core_id, address, (uint16)data);
 	(void)put16(region, core_id, address + 2U, (uint16)(data >> 16U));

@@ -28,7 +28,9 @@ set(RISCV_INCLUDES
     "${ATHRILL_TARGET_SOURCE_DIR}/cpu" "${ATHRILL_TARGET_SOURCE_DIR}/cpu/config"
     "${ATHRILL_TARGET_SOURCE_DIR}/cpu/cpu_dec" "${ATHRILL_TARGET_SOURCE_DIR}/cpu/cpu_exec"
     "${ATHRILL_TARGET_SOURCE_DIR}/cpu/mpu"
-    "${ATHRILL_TARGET_SOURCE_DIR}/device" "${ATHRILL_TARGET_SOURCE_DIR}/device/peripheral" "${ATHRILL_TARGET_SOURCE_DIR}/debugger/interaction/inc")
+    "${ATHRILL_TARGET_SOURCE_DIR}/device" "${ATHRILL_TARGET_SOURCE_DIR}/device/intc"
+    "${ATHRILL_TARGET_SOURCE_DIR}/device/peripheral"
+    "${ATHRILL_TARGET_SOURCE_DIR}/debugger/interaction/inc")
 function(riscv_target name)
   athrill_apply_common_settings(${name})
   target_include_directories(${name} PRIVATE ${RISCV_INCLUDES})
@@ -45,6 +47,7 @@ riscv_target(athrill_cui)
 
 set(RISCV_CPU_SOURCES
   src/cpu/config/cpu_config.c
+  src/device/intc/intc_cpu.c
   src/cpu/cpu_dec/riscv_decode.c
   src/cpu/cpu_dec/riscv_instruction_table.c
   src/cpu/cpu_dec/riscv_compressed_table.c
@@ -70,7 +73,7 @@ riscv_target(athrill_riscv_cpu)
 
 set(DEVICE_SOURCES ${ATHRILL_DEVICE_COMMON_SOURCES} ${ATHRILL_DEVICE_THREAD_SOURCES}
   src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
-  src/device/peripheral/erbium_plic.c src/debugger/executor/concrete_executor/dbg_target_cpu.c
+  src/device/intc/intc.c src/debugger/executor/concrete_executor/dbg_target_cpu.c
   src/debugger/executor/concrete_executor/dbg_target_serial.c)
 if(ATHRILL_ENABLE_EXDEV)
   list(APPEND DEVICE_SOURCES ${ATHRILL_DEVICE_EXDEV_SOURCES} ${ATHRILL_DEVICE_EXDEV_POSIX_SOURCES})
@@ -113,7 +116,7 @@ if(BUILD_TESTING)
   add_executable(athrill-clock-counter-test test/clock_counter_test.c
     ${RISCV_CPU_SOURCES}
     src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
-    src/device/peripheral/erbium_plic.c)
+    src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
   add_executable(athrill-decode-benchmark test/decode_benchmark.c

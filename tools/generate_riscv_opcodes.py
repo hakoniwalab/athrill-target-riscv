@@ -24,13 +24,30 @@ fsqrt_s fsgnj_s fsgnjn_s fsgnjx_s fmin_s fmax_s fcvt_w_s fcvt_wu_s
 fmv_x_w feq_s flt_s fle_s fclass_s fcvt_s_w fcvt_s_wu fmv_w_x
 fcvt_l_s fcvt_lu_s fcvt_s_l fcvt_s_lu""".split()
 
+# riscv-opcodes describes compressed encodings but not their base-ISA expansion.
+# These are the hand-maintained semantic relations used by the C template.
+COMPRESSED_EXPANSIONS = {
+    "c_addi4spn": "addi", "c_lw": "lw", "c_ld": "ld",
+    "c_sw": "sw", "c_sd": "sd", "c_nop": "addi",
+    "c_addi": "addi", "c_addiw": "addiw", "c_li": "addi",
+    "c_addi16sp": "addi", "c_lui": "lui", "c_srli": "srli",
+    "c_srai": "srai", "c_andi": "andi", "c_sub": "sub",
+    "c_xor": "xor", "c_or": "or", "c_and": "and",
+    "c_subw": "subw", "c_addw": "addw", "c_j": "jal",
+    "c_beqz": "beq", "c_bnez": "bne", "c_slli": "slli",
+    "c_lwsp": "lw", "c_ldsp": "ld", "c_jr": "jalr",
+    "c_mv": "add", "c_ebreak": "ebreak", "c_jalr": "jalr",
+    "c_add": "add", "c_swsp": "sw", "c_sdsp": "sd",
+}
+
 
 def notice(license_text):
     return ("/* SPDX-License-Identifier: BSD-3-Clause\n *\n"
             f" * Generated from riscv-opcodes commit {COMMIT}.\n"
             " * Command: tools/generate_riscv_opcodes.py /path/to/riscv-opcodes\n"
             " *\n * Upstream license:\n" +
-            "\n".join(" * " + line for line in license_text.splitlines()) +
+            "\n".join(" * " + line if line else " *"
+                      for line in license_text.splitlines()) +
             "\n */\n")
 
 
@@ -84,6 +101,17 @@ def write_table(path, instructions, header):
     path.write_text("".join(lines))
 
 
+def write_compressed(path, instructions, header):
+    """Write the RV64C expander after validating its upstream definitions."""
+    missing = sorted(name for name in COMPRESSED_EXPANSIONS
+                     if name not in instructions)
+    if missing:
+        raise SystemExit("missing compressed definitions: " + ", ".join(missing))
+    template = pathlib.Path(__file__).with_name(
+        "riscv_compressed_table.c.in").read_text()
+    path.write_text(header + template.rstrip() + "\n")
+
+
 def main():
     root = pathlib.Path(sys.argv[1]).resolve()
     actual = subprocess.check_output(
@@ -106,6 +134,8 @@ def main():
         "\n".join(definitions) + "\n\n#endif\n")
     instructions = json.loads((root / "instr_dict.json").read_text())
     write_table(destination / "riscv_instruction_table.c", instructions, header)
+    write_compressed(destination / "riscv_compressed_table.c", instructions,
+                     header)
 
 
 if __name__ == "__main__":

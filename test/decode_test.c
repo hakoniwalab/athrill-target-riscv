@@ -25,7 +25,7 @@ static uint64 reference_immediate(uint32 instruction)
 	uint64 value;
 
 	if ((opcode == 0x03U) || (opcode == 0x13U) ||
-		(opcode == 0x1bU) || (opcode == 0x67U)) {
+	    (opcode == 0x1bU) || (opcode == 0x67U)) {
 		return reference_sign_extend(instruction >> 20U, 12U);
 	}
 	if (opcode == 0x23U) {
@@ -65,20 +65,20 @@ static int check_instruction(const DecodeExpectation *expected)
 	}
 	if (strcmp(entry->mnemonic, expected->mnemonic) != 0) {
 		printf("0x%08x: expected %s, got %s\n",
-			expected->instruction, expected->mnemonic, entry->mnemonic);
+		       expected->instruction, expected->mnemonic, entry->mnemonic);
 		return 1;
 	}
 	if (!riscv_decode_fill(0x40000238U, expected->instruction, 4U,
-		&decoded)) {
+	                       &decoded)) {
 		return 1;
 	}
 	if ((decoded.rd != expected->rd) || (decoded.rs1 != expected->rs1) ||
-		(decoded.rs2 != expected->rs2) ||
-		(decoded.immediate != expected->immediate) ||
-		(decoded.immediate != reference_immediate(expected->instruction))) {
+	    (decoded.rs2 != expected->rs2) ||
+	    (decoded.immediate != expected->immediate) ||
+	    (decoded.immediate != reference_immediate(expected->instruction))) {
 		printf("0x%08x: fields %u/%u/%u/0x%llx\n",
-			expected->instruction, decoded.rd, decoded.rs1, decoded.rs2,
-			(unsigned long long)decoded.immediate);
+		       expected->instruction, decoded.rd, decoded.rs1, decoded.rs2,
+		       (unsigned long long)decoded.immediate);
 		return 1;
 	}
 	if (decoded.execute != entry->execute) {
@@ -99,12 +99,27 @@ int main(void)
 		{0xff9ff06fU, "jal", 0U, 31U, 25U, ~7ULL}
 	};
 	uint32 index;
+	uint64 compressed_hash = 1469598103934665603ULL;
 
 	for (index = 0U; index <
-		(uint32)(sizeof(expectations) / sizeof(expectations[0])); index++) {
+	     (uint32)(sizeof(expectations) / sizeof(expectations[0])); index++) {
 		if (check_instruction(&expectations[index]) != 0) {
 			return 1;
 		}
+	}
+	for (index = 0U; index < 65536U; index++) {
+		uint32 expanded = 0U;
+		std_bool valid = riscv_expand_compressed((uint16)index, &expanded);
+
+		compressed_hash ^= (uint64)valid;
+		compressed_hash *= 1099511628211ULL;
+		compressed_hash ^= expanded;
+		compressed_hash *= 1099511628211ULL;
+	}
+	if (compressed_hash != 0x8326045460d772a3ULL) {
+		printf("compressed expansion hash: %016llx\n",
+		       (unsigned long long)compressed_hash);
+		return 2;
 	}
 	return 0;
 }
