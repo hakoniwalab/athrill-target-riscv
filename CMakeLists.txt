@@ -125,6 +125,9 @@ if(BUILD_TESTING)
     src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
+  add_executable(athrill-mmio-register-test test/mmio_register_test.c)
+  riscv_target(athrill-mmio-register-test)
+  add_test(NAME athrill-mmio-register COMMAND athrill-mmio-register-test)
   add_executable(athrill-uart-tx-test test/uart_tx_test.c src/device/peripheral/erbium_uart.c)
   riscv_target(athrill-uart-tx-test)
   add_test(NAME athrill-uart-tx COMMAND athrill-uart-tx-test)
@@ -156,6 +159,10 @@ if(BUILD_TESTING)
       --athrill $<TARGET_FILE:athrill3>
       --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64i/memory.txt"
       --elf "${RISCV_FIRMWARE_DIR}/pmp-decode-cache-test.elf" --clocks 1000000)
+    add_test(NAME firmware-csr-write COMMAND Python3::Interpreter "${_runner}"
+      --athrill $<TARGET_FILE:athrill3>
+      --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64i/memory.txt"
+      --elf "${RISCV_FIRMWARE_DIR}/csr-write-test.elf" --clocks 1000000)
     add_test(NAME firmware-fetch-boundary COMMAND Python3::Interpreter "${_runner}"
       --athrill $<TARGET_FILE:athrill3>
       --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/fetch/memory.txt"

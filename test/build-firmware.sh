@@ -37,6 +37,9 @@ $gcc $common -march=rv64i_zicsr -Wl,-T,rv64i/link.ld \
 $gcc $common -march=rv64i_zicsr -Wl,-T,rv64i/link.ld \
 	rv64i/start.S pmp/run_until_trap.S fetch/boundary_test.c -lgcc \
 	-o /out/fetch-boundary-test.elf
+$gcc $common -march=rv64i_zicsr -Wl,-T,rv64i/link.ld \
+	rv64i/start.S pmp/run_until_trap.S csr/csr_write_snippets.S csr/csr_write_test.c -lgcc \
+	-o /out/csr-write-test.elf
 $gcc -O2 -fno-builtin -nostdlib -nostartfiles -march=rv64im_zicsr -mabi=lp64 \
 	-mcmodel=medany -T erbium/link.ld erbium/start.S erbium/device_test.c \
 	-o /out/erbium-device-test.elf

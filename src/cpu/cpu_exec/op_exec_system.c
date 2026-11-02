@@ -213,7 +213,12 @@ static int execute_csr(
 	}
 	user_counter = (number == 0xc00U) || (number == 0xc02U);
 	counter = (number == 0xb00U) || (number == 0xb02U) || user_counter;
-	write = (operation == 1U) || (source != 0U);
+	/*
+	 * CSRRS/CSRRC (and their immediate forms) write unless the rs1 field is
+	 * zero (x0 or uimm 0), whatever the value: setting or clearing no bits
+	 * of a read-only CSR through a register is still an illegal write.
+	 */
+	write = (operation == 1U) || (decoded->rs1 != 0U);
 	if ((number >= 1U) && (number <= 3U)) {
 		if (!fp_csr_access(core, number, &old, FALSE)) {
 			riscv_raise_exception(core, 2U, decoded->instruction);
