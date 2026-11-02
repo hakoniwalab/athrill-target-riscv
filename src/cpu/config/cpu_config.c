@@ -136,14 +136,19 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 {
 	TargetCoreType *core = &virtual_cpu.cores[id].core;
 	RiscvDecodedInsn *decoded;
-	uint32 insn;
+	uint32 insn = 0U;	/* stays 0 in the trace when no instruction is fetched */
 	uint8 length;
 	std_bool cacheable;
 	int retired = RISCV_EXEC_TRAP;
 	uint32 interrupt_cause;
 	uint64 trace_pc = core->reg.pc;
-	CpuRegisterType trace_registers = core->reg;
+	CpuRegisterType trace_registers;
 	uint32 trace_index;
+
+	/* The register snapshot is only needed to print the trace deltas. */
+	if (riscv_trace_enabled) {
+		trace_registers = core->reg;
+	}
 	core->reg.x[0] = 0;
 	core->access_fault = FALSE;
 	core->trace_store_valid = FALSE;
