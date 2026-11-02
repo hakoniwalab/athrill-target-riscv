@@ -71,3 +71,10 @@ void riscv_raise_exception(TargetCoreType *core, uint64 cause, uint64 tval)
     core->reg.privilege = RISCV_PRIV_M;
     core->reg.pc = core->reg.csr.mtvec & ~3ULL;
 }
+
+void riscv_raise_interrupt(TargetCoreType *core, uint64 cause)
+{
+    riscv_raise_exception(core, (1ULL << 63) | cause, 0);
+    if ((core->reg.csr.mtvec & 3U) == 1U)
+        core->reg.pc = (core->reg.csr.mtvec & ~3ULL) + 4U * cause;
+}

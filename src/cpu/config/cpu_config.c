@@ -14,7 +14,7 @@ static void reset_core(TargetCoreType *core)
     memset(core, 0, sizeof(*core));
     core->core_id = id;
     core->reg.privilege = RISCV_PRIV_M;
-    core->reg.csr.misa = (2ULL << 62) | (1ULL << ('I'-'A'));
+    core->reg.csr.misa = (2ULL << 62) | (1ULL << ('I'-'A')) | (1ULL << ('M'-'A')) | (1ULL << ('C'-'A'));
     core->reg.csr.mhartid = id;
 }
 
@@ -37,7 +37,7 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
 {
     uint8 *p;
     uint16 lo;
-    if ((core->reg.pc & 3U) != 0) {
+    if ((core->reg.pc & 1U) != 0) {
         riscv_raise_exception(core, 0, core->reg.pc); core->access_fault = TRUE; return STD_E_OK;
     }
     if (!riscv_pmp_check(core, core->reg.pc, 2, CpuMemoryAccess_EXEC)) {
@@ -65,17 +65,25 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
     uint32 insn;
     uint8 length;
     int retired = RISCV_EXEC_TRAP;
+    uint64 pending = core->reg.csr.mip & core->reg.csr.mie;
     core->reg.x[0] = 0;
     core->access_fault = FALSE;
+    if (pending != 0 && (core->reg.privilege != RISCV_PRIV_M || (core->reg.csr.mstatus & (1ULL << 3)) != 0)) {
+        unsigned cause = (pending & (1ULL << 11)) ? 11U : (pending & (1ULL << 7)) ? 7U : 3U;
+        riscv_raise_interrupt(core, cause);
+        core->is_halt = FALSE;
+        goto clock_done;
+    }
     decoded = &core->decode_cache[(core->reg.pc >> 1) & (RISCV_DECODE_CACHE_ENTRIES - 1U)];
     if (!core->is_halt && decoded->valid && decoded->pc == core->reg.pc &&
-        decoded->pmp_epoch == core->pmp_epoch && decoded->length == 4U) {
-        insn = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8 |
-               (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
+        decoded->pmp_epoch == core->pmp_epoch) {
+        insn = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8;
+        if (decoded->length == 4U) insn |= (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
+        else if (!riscv_expand_compressed((uint16)insn, &insn)) insn = 0;
         if (insn == decoded->instruction) {
             retired = decoded->execute(core, decoded);
         }
-        else if (riscv_decode_fill(core->reg.pc, insn, 4U, decoded)) {
+        else if (riscv_decode_fill(core->reg.pc, insn, decoded->length, decoded)) {
             decoded->pmp_epoch = core->pmp_epoch;
             retired = decoded->execute(core, decoded);
         }
@@ -86,7 +94,9 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
     }
     else if (!core->is_halt && fetch(core, &insn, &length) == STD_E_OK && !core->access_fault) {
         uint8 *code = NULL;
-        if (length == 4U && riscv_decode_fill(core->reg.pc, insn, length, decoded) &&
+        uint32 expanded = insn;
+        if ((length == 4U || riscv_expand_compressed((uint16)insn, &expanded)) &&
+            riscv_decode_fill(core->reg.pc, expanded, length, decoded) &&
             bus_get_pointer(core->core_id, core->reg.pc, &code) == STD_E_OK) {
             decoded->code = code;
             decoded->pmp_epoch = core->pmp_epoch;
@@ -98,6 +108,7 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
             riscv_raise_exception(core, 2, insn);
         }
     }
+clock_done:
     core->internal_cycle++;
     if (retired == RISCV_EXEC_RETIRED) core->internal_instret++;
     core->reg.x[0] = 0;

@@ -27,7 +27,7 @@ set(RISCV_INCLUDES
     "${ATHRILL_SRC_DIR}/debugger/executor" "${ATHRILL_SRC_DIR}/main"
     "${ATHRILL_TARGET_SOURCE_DIR}/cpu" "${ATHRILL_TARGET_SOURCE_DIR}/cpu/config"
     "${ATHRILL_TARGET_SOURCE_DIR}/cpu/decode" "${ATHRILL_TARGET_SOURCE_DIR}/cpu/mpu"
-    "${ATHRILL_TARGET_SOURCE_DIR}/device" "${ATHRILL_TARGET_SOURCE_DIR}/debugger/interaction/inc")
+    "${ATHRILL_TARGET_SOURCE_DIR}/device" "${ATHRILL_TARGET_SOURCE_DIR}/device/peripheral" "${ATHRILL_TARGET_SOURCE_DIR}/debugger/interaction/inc")
 function(riscv_target name)
   athrill_apply_common_settings(${name})
   target_include_directories(${name} PRIVATE ${RISCV_INCLUDES})
@@ -48,7 +48,8 @@ add_library(athrill_riscv_cpu STATIC
 riscv_target(athrill_riscv_cpu)
 
 set(DEVICE_SOURCES ${ATHRILL_DEVICE_COMMON_SOURCES} ${ATHRILL_DEVICE_THREAD_SOURCES}
-  src/device/device.c src/debugger/executor/concrete_executor/dbg_target_cpu.c
+  src/device/device.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
+  src/device/peripheral/erbium_plic.c src/debugger/executor/concrete_executor/dbg_target_cpu.c
   src/debugger/executor/concrete_executor/dbg_target_serial.c)
 if(ATHRILL_ENABLE_EXDEV)
   list(APPEND DEVICE_SOURCES ${ATHRILL_DEVICE_EXDEV_SOURCES} ${ATHRILL_DEVICE_EXDEV_POSIX_SOURCES})
@@ -90,7 +91,8 @@ if(BUILD_TESTING)
   add_test(NAME athrill-pmp COMMAND athrill-pmp-test)
   add_executable(athrill-clock-counter-test test/clock_counter_test.c
     src/cpu/config/cpu_config.c src/cpu/decode/riscv_decode.c src/cpu/mpu/pmp.c
-    src/device/device.c)
+    src/device/device.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
+    src/device/peripheral/erbium_plic.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
   add_executable(athrill-decode-benchmark test/decode_benchmark.c
@@ -98,6 +100,6 @@ if(BUILD_TESTING)
   riscv_target(athrill-decode-benchmark)
 endif()
 
-message(STATUS "Athrill target: RV64I + Zicsr/Zifencei")
+message(STATUS "Athrill target: RV64IMC + Zicsr/Zifencei")
 message(STATUS "Athrill EXDEV: ${ATHRILL_ENABLE_EXDEV}")
 message(STATUS "Athrill Hakoniwa: ${ATHRILL_ENABLE_HAKONIWA}")

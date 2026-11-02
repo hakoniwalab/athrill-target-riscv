@@ -1,6 +1,7 @@
 #include "mpu.h"
 #include "cpu_config.h"
 #include <stdio.h>
+#include "peripheral/erbium_devices.h"
 
 #define SERIAL_ADDR 0x10000000U
 static uint8 serial_data[4];
@@ -14,4 +15,8 @@ static Std_ReturnType put32(MpuAddressRegionType *r, CoreIdType c, AthrillAddrTy
 static Std_ReturnType ptr(MpuAddressRegionType *r, CoreIdType c, AthrillAddrType a, uint8 **d) { (void)c; *d=&r->data[a-r->start]; return STD_E_OK; }
 static MpuAddressRegionOperationType serial_ops={get8,get16,get32,put8,put16,put32,ptr};
 
-MpuAddressMapType mpu_address_map={.dynamic_map_num=0,.dynamic_map=NULL,.map={{.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=SERIAL_ADDR,.size=4,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=serial_data,.ops=&serial_ops}}};
+MpuAddressMapType mpu_address_map={.dynamic_map_num=0,.dynamic_map=NULL,.map={
+ {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=SERIAL_ADDR,.size=4,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=serial_data,.ops=&serial_ops},
+ {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=0x02004000ULL,.size=0x100,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=erbium_uart_data,.ops=&erbium_uart_ops},
+ {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=0x80f40200ULL,.size=0x10,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=erbium_timer_data,.ops=&erbium_timer_ops},
+ {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=0xa0000000ULL,.size=0x200008,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=erbium_plic_data,.ops=&erbium_plic_ops}}};
