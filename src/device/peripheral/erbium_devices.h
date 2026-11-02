@@ -16,7 +16,7 @@ void erbium_devices_reset(void);
 void erbium_devices_supply_clock(DeviceClockType *clock);
 void erbium_sysreg_reset(void);
 void erbium_uart_reset(void);
-void erbium_uart_tick(void);
+void erbium_uart_tick(DeviceClockType *clock);
 void erbium_timer_reset(void);
 void erbium_timer_tick(DeviceClockType *clock);
 Std_ReturnType erbium_uart_receive(uint8 data);

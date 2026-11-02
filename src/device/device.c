@@ -44,7 +44,7 @@ void device_reset(CpuType *cpu, DeviceClockType *clock)
 
 void erbium_devices_supply_clock(DeviceClockType *clock)
 {
-	erbium_uart_tick();
+	erbium_uart_tick(clock);
 	erbium_timer_tick(clock);
 }
 

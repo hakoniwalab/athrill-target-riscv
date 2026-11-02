@@ -9,18 +9,94 @@
 #define UART_BASE 0x02004000ULL
 #define UART_FIFO_SIZE 16U
 #define UART_STATUS_TX_EMPTY (1U << 0)
+#define UART_STATUS_TX_FULL (1U << 1)
 #define UART_STATUS_RX_NOT_EMPTY (1U << 2)
+#define UART_PLIC_SOURCE 3U
+
+/*
+ * Transmitter: a 16-character FIFO that sends one character every
+ * UART_CHARACTER_CLOCKS clocks, at multiples of that period on the
+ * virtual clock. The FIFO is described by the clock at which it becomes
+ * empty, so its state follows the virtual clock also when Athrill skips
+ * clocks while the CPU waits. A character written to a full FIFO is lost,
+ * as on the hardware. Characters reach the host terminal when written.
+ *
+ * The interrupt line follows status and interrupt enable at once, like a
+ * level output of the UART: after register accesses and received data,
+ * and at the clock at which the TX FIFO drains.
+ */
+#define UART_CHARACTER_CLOCKS 30U
+
 uint8 erbium_uart_data[0x100];
 static uint32 baud, control, ie, rx_threshold;
 static uint8 rx_fifo[UART_FIFO_SIZE];
 static unsigned rx_head, rx_count;
-static uint64 uart_clock;
-static std_bool tx_busy;
+static uint64 uart_now;
+static uint64 tx_empty_clock;
+static std_bool irq_level;
+
+static uint32 tx_count(void)
+{
+	if (uart_now >= tx_empty_clock) {
+		return 0U;
+	}
+	return (uint32)((tx_empty_clock - uart_now + UART_CHARACTER_CLOCKS - 1U) / UART_CHARACTER_CLOCKS);
+}
+
+static void tx_push(uint8 data)
+{
+	uint32 count = tx_count();
+
+	if (count == UART_FIFO_SIZE) {
+		return;
+	}
+	if (count == 0U) {
+		tx_empty_clock = ((uart_now / UART_CHARACTER_CLOCKS) + 1U) * UART_CHARACTER_CLOCKS;
+	}
+	else {
+		tx_empty_clock += UART_CHARACTER_CLOCKS;
+	}
+	(void)dbg_serial_putchar(0, data);
+}
+
+static uint32 status_value(void)
+{
+	uint32 count = tx_count();
+	uint32 status = 0U;
+
+	if (count == 0U) {
+		status |= UART_STATUS_TX_EMPTY;
+	}
+	if (count == UART_FIFO_SIZE) {
+		status |= UART_STATUS_TX_FULL;
+	}
+	if (rx_count != 0U) {
+		status |= UART_STATUS_RX_NOT_EMPTY;
+	}
+	return status;
+}
+
+static std_bool irq_condition(void)
+{
+	if (((ie & UART_STATUS_TX_EMPTY) != 0U) && (tx_count() == 0U)) {
+		return TRUE;
+	}
+	if (((ie & UART_STATUS_RX_NOT_EMPTY) != 0U) && (rx_count > rx_threshold)) {
+		return TRUE;
+	}
+	return FALSE;
+}
+
 static void update_irq(void)
 {
-	intc_plic_set_source(3, ((ie & UART_STATUS_RX_NOT_EMPTY) != 0U &&
-	                         rx_count > rx_threshold) ? TRUE : FALSE);
+	std_bool level = irq_condition();
+
+	if (level != irq_level) {
+		irq_level = level;
+		intc_plic_set_source(UART_PLIC_SOURCE, level);
+	}
 }
+
 Std_ReturnType erbium_uart_receive(uint8 data)
 {
 	unsigned tail;
@@ -45,7 +121,7 @@ static uint32 read_reg(AthrillAddrType a)
 		update_irq();
 		return v;
 	case 0x18:
-		return (!tx_busy ? UART_STATUS_TX_EMPTY : 0U) | (rx_count != 0U ? UART_STATUS_RX_NOT_EMPTY : 0U);
+		return status_value();
 	case 0x28:
 		return control;
 	case 0x30:
@@ -63,8 +139,8 @@ static void write_reg(AthrillAddrType a, uint32 v)
 		baud = v;
 		break;
 	case 8:
-		(void)dbg_serial_putchar(0, (uint8)v);
-		tx_busy = TRUE;
+		tx_push((uint8)v);
+		update_irq();
 		break;
 	case 0x28:
 		control = v;
@@ -130,14 +206,32 @@ void erbium_uart_reset(void)
 {
 	memset(erbium_uart_data, 0, sizeof(erbium_uart_data));
 	memset(rx_fifo, 0, sizeof(rx_fifo));
-	baud = control = ie = rx_threshold = 0;
-	rx_head = rx_count = 0;
-	uart_clock = 0;
-	tx_busy = FALSE;
-	update_irq();
+	baud = 0;
+	control = 0;
+	ie = 0;
+	rx_threshold = 0;
+	rx_head = 0;
+	rx_count = 0;
+	uart_now = 0;
+	tx_empty_clock = 0;
+	irq_level = FALSE;
+	intc_plic_set_source(UART_PLIC_SOURCE, FALSE);
 }
-void erbium_uart_tick(void)
+
+void erbium_uart_tick(DeviceClockType *clock)
 {
-	uart_clock++;
-	if ((uart_clock % 30U) == 0U)tx_busy = FALSE;
+	uint64 until;
+
+	uart_now = clock->clock;
+	if (ie == 0U) {
+		return;
+	}
+	update_irq();
+	/* Do not skip clocks past the drain while the TX-empty interrupt is on. */
+	if (((ie & UART_STATUS_TX_EMPTY) != 0U) && (tx_count() != 0U)) {
+		until = tx_empty_clock - uart_now;
+		if (until < clock->min_intr_interval) {
+			clock->min_intr_interval = until;
+		}
+	}
 }

@@ -3,8 +3,10 @@
  *
  * Prints through the Shakti UART, takes three machine-timer interrupts
  * (sleeping in WFI in between) and echoes one character received on the
- * UART through the PLIC. The last line is "SELFTEST PASS" or
- * "SELFTEST FAIL <count>".
+ * UART through the PLIC. Then it queues characters and sleeps in WFI until
+ * the TX-empty interrupt reports that the transmitter has drained (the
+ * device config enables clock skip, so this checks that a skip stops at
+ * the drain). The last line is "SELFTEST PASS" or "SELFTEST FAIL <count>".
  */
 #include <stdint.h>
 
@@ -14,9 +16,11 @@
 #define UART_TX 0x02004008U
 #define UART_RX 0x02004010U
 #define UART_STATUS 0x02004018U
+#define UART_STATUS_TX_EMPTY 0x1U
 #define UART_STATUS_TX_FULL 0x2U
 #define UART_INTERRUPT_ENABLE 0x02004030U
 #define UART_RX_INTERRUPT 0x4U
+#define UART_TX_EMPTY_INTERRUPT 0x1U
 
 #define MTIME 0x80f40200U
 #define MTIMECMP 0x80f40208U
@@ -48,6 +52,8 @@ static void test_putc(char c)
 static volatile unsigned timer_interrupts;
 static volatile unsigned rx_characters;
 static volatile unsigned unexpected_traps;
+static volatile unsigned tx_empty_interrupts;
+static volatile unsigned tx_empty_seen_in_status;
 
 static void handle_timer_interrupt(void)
 {
@@ -63,7 +69,16 @@ static void handle_external_interrupt(void)
 	uint32_t source = REG32(PLIC_CLAIM);
 	char received;
 
-	if (source == PLIC_SOURCE_UART) {
+	if ((source == PLIC_SOURCE_UART)
+		&& ((REG32(UART_INTERRUPT_ENABLE) & UART_TX_EMPTY_INTERRUPT) != 0U)) {
+		/* The TX-empty interrupt is level: switch it off before returning. */
+		if ((REG32(UART_STATUS) & UART_STATUS_TX_EMPTY) != 0U) {
+			tx_empty_seen_in_status++;
+		}
+		REG32(UART_INTERRUPT_ENABLE) = 0U;
+		tx_empty_interrupts++;
+	}
+	else if (source == PLIC_SOURCE_UART) {
 		received = (char)REG32(UART_RX);
 		test_puts("echo ");
 		test_putc(received);
@@ -111,11 +126,19 @@ int main(void)
 			|| rx_characters < EXPECTED_RX_CHARACTERS)) {
 		asm volatile("wfi");
 	}
-	asm volatile("csrci mstatus, 8");
 	REG64(MTIMECMP) = ~0ULL;
 	REG32(UART_INTERRUPT_ENABLE) = 0U;
+	/* Queue a line, then sleep until the transmitter has drained. */
+	test_puts("tx drain\n");
+	REG32(UART_INTERRUPT_ENABLE) = UART_TX_EMPTY_INTERRUPT;
+	while (unexpected_traps == 0U && tx_empty_interrupts == 0U) {
+		asm volatile("wfi");
+	}
+	asm volatile("csrci mstatus, 8");
 	test_check("timer interrupts", timer_interrupts == EXPECTED_TIMER_INTERRUPTS);
 	test_check("uart rx interrupt", rx_characters == EXPECTED_RX_CHARACTERS);
+	test_check("tx empty interrupt", tx_empty_interrupts == 1U);
+	test_check("tx empty in status at the interrupt", tx_empty_seen_in_status == 1U);
 	test_check("no unexpected trap", unexpected_traps == 0U);
 	test_report_finish();
 	for (;;) {

@@ -2,7 +2,11 @@
 
 Build all test programs with `test/build-firmware.sh build/firmware` (see the
 top-level README); the device test is `build/firmware/erbium-device-test.elf`
-and runs as the `firmware-erbium-devices` CTest.
+and runs as the `firmware-erbium-devices` CTest. It covers UART output, three
+machine-timer interrupts, one received character through the PLIC, and the
+TX-empty interrupt after the TX FIFO drains while the CPU waits in WFI with
+clock skip enabled. The exact TX timing (16-character FIFO, one character per
+30 clocks) is checked by the `athrill-uart-tx` unit test.
 
 Run Athrill interactively:
 
