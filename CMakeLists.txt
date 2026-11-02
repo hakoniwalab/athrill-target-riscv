@@ -144,6 +144,10 @@ if(BUILD_TESTING)
   set(_runner "${CMAKE_CURRENT_SOURCE_DIR}/test/run_firmware_test.py")
   set(_erbium "${CMAKE_CURRENT_SOURCE_DIR}/test/erbium")
   if(Python3_FOUND AND EXISTS "${RISCV_FIRMWARE_DIR}/rv64i-selftest.elf")
+    add_test(NAME firmware-pmp-decode-cache COMMAND Python3::Interpreter "${_runner}"
+      --athrill $<TARGET_FILE:athrill3>
+      --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64i/memory.txt"
+      --elf "${RISCV_FIRMWARE_DIR}/pmp-decode-cache-test.elf" --clocks 1000000)
     if(RISCV_ERBIUM_COMPAT)
       add_test(NAME firmware-rv64i-selftest COMMAND Python3::Interpreter "${_runner}"
         --athrill $<TARGET_FILE:athrill3>

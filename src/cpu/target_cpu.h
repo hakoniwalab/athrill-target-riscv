@@ -21,7 +21,12 @@ typedef struct RiscvDecodedInsn {
     uint32 instruction;
     RiscvDecodedExecutor execute;
     uint8 *code;
+    /*
+     * Fetch permission is checked when the entry is filled. A cached entry is
+     * reused only under the same PMP setting and privilege it was checked with.
+     */
     uint64 pmp_epoch;
+    RiscvPrivilege privilege;
     uint8 rd, rs1, rs2, rs3, length, aux, valid;
 } RiscvDecodedInsn;
 

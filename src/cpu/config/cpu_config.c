@@ -103,6 +103,20 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
 	return STD_E_OK;
 }
 
+static std_bool decode_cache_hit(const TargetCoreType *core, const RiscvDecodedInsn *decoded)
+{
+	return decoded->valid
+		&& decoded->pc == core->reg.pc
+		&& decoded->pmp_epoch == core->pmp_epoch
+		&& decoded->privilege == core->reg.privilege;
+}
+
+static void decode_cache_remember_permission(const TargetCoreType *core, RiscvDecodedInsn *decoded)
+{
+	decoded->pmp_epoch = core->pmp_epoch;
+	decoded->privilege = core->reg.privilege;
+}
+
 Std_ReturnType cpu_supply_clock(CoreIdType id)
 {
 	TargetCoreType *core = &virtual_cpu.cores[id].core;
@@ -123,15 +137,14 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 		goto clock_done;
 	}
 	decoded = &core->decode_cache[(core->reg.pc >> 1) & (RISCV_DECODE_CACHE_ENTRIES - 1U)];
-	if (!core->is_halt && decoded->valid && decoded->pc == core->reg.pc &&
-	    decoded->pmp_epoch == core->pmp_epoch) {
+	if (!core->is_halt && decode_cache_hit(core, decoded)) {
 		insn = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8;
 		if (decoded->length == 4U) insn |= (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
 		else if (!riscv_expand_compressed((uint16)insn, &insn)) insn = 0;
 		if (insn == decoded->instruction) {
 			retired = decoded->execute(core, decoded);
 		} else if (riscv_decode_fill(core->reg.pc, insn, decoded->length, decoded)) {
-			decoded->pmp_epoch = core->pmp_epoch;
+			decode_cache_remember_permission(core, decoded);
 			retired = decoded->execute(core, decoded);
 		} else {
 			core->decoded_code = NULL;
@@ -144,7 +157,7 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 		    riscv_decode_fill(core->reg.pc, expanded, length, decoded) &&
 		    bus_get_pointer(core->core_id, core->reg.pc, &code) == STD_E_OK) {
 			decoded->code = code;
-			decoded->pmp_epoch = core->pmp_epoch;
+			decode_cache_remember_permission(core, decoded);
 			retired = decoded->execute(core, decoded);
 		} else {
 			decoded->valid = 0;

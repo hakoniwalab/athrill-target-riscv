@@ -31,6 +31,9 @@ $gcc $common -march=rv64if_zicsr -DERBIUM_MODE=1 -Wl,-T,rv64f/link.ld \
 	rv64f/start.S rv64f/selftest.c -lgcc -o /out/rv64f-selftest-erbium.elf
 $gcc $common -march=rv64if_zicsr -DERBIUM_MODE=0 -Wl,-T,rv64f/link.ld \
 	rv64f/start.S rv64f/selftest.c -lgcc -o /out/rv64f-selftest-standard.elf
+$gcc $common -march=rv64i_zicsr -Wl,-T,rv64i/link.ld \
+	rv64i/start.S pmp/run_until_trap.S pmp/decode_cache_test.c -lgcc \
+	-o /out/pmp-decode-cache-test.elf
 $gcc -O2 -fno-builtin -nostdlib -nostartfiles -march=rv64im_zicsr -mabi=lp64 \
 	-mcmodel=medany -T erbium/link.ld erbium/start.S erbium/device_test.c \
 	-o /out/erbium-device-test.elf
