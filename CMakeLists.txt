@@ -163,6 +163,10 @@ if(BUILD_TESTING)
       --athrill $<TARGET_FILE:athrill3>
       --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64i/memory.txt"
       --elf "${RISCV_FIRMWARE_DIR}/csr-write-test.elf" --clocks 1000000)
+    add_test(NAME firmware-mpu-region COMMAND Python3::Interpreter "${_runner}"
+      --athrill $<TARGET_FILE:athrill3>
+      --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/mpu/memory.txt"
+      --elf "${RISCV_FIRMWARE_DIR}/mpu-region-test.elf" --clocks 1000000)
     add_test(NAME firmware-fetch-boundary COMMAND Python3::Interpreter "${_runner}"
       --athrill $<TARGET_FILE:athrill3>
       --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/fetch/memory.txt"
