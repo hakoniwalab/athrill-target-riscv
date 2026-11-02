@@ -88,8 +88,13 @@ if(BUILD_TESTING)
   target_include_directories(athrill-pmp-test PRIVATE src/cpu src/cpu/config src/cpu/mpu)
   riscv_target(athrill-pmp-test)
   add_test(NAME athrill-pmp COMMAND athrill-pmp-test)
+  add_executable(athrill-clock-counter-test test/clock_counter_test.c
+    src/cpu/config/cpu_config.c src/cpu/decode/riscv_decode.c src/cpu/mpu/pmp.c
+    src/device/device.c)
+  riscv_target(athrill-clock-counter-test)
+  add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
 endif()
 
-message(STATUS "Athrill target: RV64IMFC skeleton")
+message(STATUS "Athrill target: RV64I + Zicsr/Zifencei")
 message(STATUS "Athrill EXDEV: ${ATHRILL_ENABLE_EXDEV}")
 message(STATUS "Athrill Hakoniwa: ${ATHRILL_ENABLE_HAKONIWA}")

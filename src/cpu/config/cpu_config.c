@@ -14,14 +14,14 @@ static void reset_core(TargetCoreType *core)
     memset(core, 0, sizeof(*core));
     core->core_id = id;
     core->reg.privilege = RISCV_PRIV_M;
-    core->reg.csr.misa = (2ULL << 62) | (1ULL << ('I'-'A')) |
-        (1ULL << ('M'-'A')) | (1ULL << ('F'-'A')) | (1ULL << ('C'-'A'));
+    core->reg.csr.misa = (2ULL << 62) | (1ULL << ('I'-'A'));
     core->reg.csr.mhartid = id;
 }
 
 void cpu_init(void)
 {
     CoreIdType i;
+    riscv_decode_init();
     for (i = 0; i < cpu_config_get_core_id_num(); i++) {
         virtual_cpu.cores[i].core.core_id = i;
         cpu_reset(i);
@@ -37,6 +37,9 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
 {
     uint8 *p;
     uint16 lo;
+    if ((core->reg.pc & 3U) != 0) {
+        riscv_raise_exception(core, 0, core->reg.pc); core->access_fault = TRUE; return STD_E_OK;
+    }
     if (!riscv_pmp_check(core, core->reg.pc, 2, CpuMemoryAccess_EXEC)) {
         riscv_raise_exception(core, 1, core->reg.pc); core->access_fault = TRUE; return STD_E_OK;
     }
@@ -58,20 +61,24 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
 Std_ReturnType cpu_supply_clock(CoreIdType id)
 {
     TargetCoreType *core = &virtual_cpu.cores[id].core;
+    const RiscvDispatchEntry *entry;
     uint32 insn;
     uint8 length;
-    uint32 i;
-    if (core->is_halt) return STD_E_OK;
+    int retired = RISCV_EXEC_TRAP;
     core->reg.x[0] = 0;
     core->access_fault = FALSE;
-    if (fetch(core, &insn, &length) != STD_E_OK || core->access_fault) return STD_E_OK;
-    for (i = 0; i < riscv_dispatch_table_count; i++) {
-        if ((insn & riscv_dispatch_table[i].mask) == riscv_dispatch_table[i].match)
-            return (Std_ReturnType)riscv_dispatch_table[i].execute(core, insn);
+    if (!core->is_halt && fetch(core, &insn, &length) == STD_E_OK && !core->access_fault) {
+        entry = length == 4U ? riscv_decode(insn) : NULL;
+        if (entry != NULL) {
+            retired = entry->execute(core, insn);
+        }
+        else {
+            core->decoded_code = NULL;
+            riscv_raise_exception(core, 2, insn);
+        }
     }
-    core->decoded_code = NULL;
-    riscv_raise_exception(core, 2, insn);
     core->reg.csr.mcycle++;
+    if (retired == RISCV_EXEC_RETIRED) core->reg.csr.minstret++;
     core->reg.x[0] = 0;
     virtual_cpu.cores[id].elaps++;
     return STD_E_OK;
