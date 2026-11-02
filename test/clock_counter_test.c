@@ -5,6 +5,8 @@
 #include "std_cpu_ops.h"
 #include <stdio.h>
 #include <string.h>
+#include "peripheral/erbium_devices.h"
+Std_ReturnType cpuemu_get_devcfg_value(const char *key,uint32 *value){(void)key;(void)value;return STD_E_INVALID;}
 
 static uint8 memory[256];
 int cpu_config_get_core_id_num(void){return 1;}
@@ -53,5 +55,6 @@ int main(void)
 
     cpu_reset(0); c=&virtual_cpu.cores[0].core;put_insn(0,0x10500073U);c->reg.csr.mie=1ULL<<3;cpu_supply_clock(0);
     if(!c->is_halt)return 8;intc_cpu_trigger_interrupt(0,3);if(c->is_halt)return 9;
+    {uint32 value=0;clock.clock=50;device_supply_clock(&clock);erbium_timer_ops.get_data32(NULL,0,0x80f40200ULL,&value);if(value!=1U)return 10;}
     return 0;
 }

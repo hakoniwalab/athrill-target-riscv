@@ -9,4 +9,6 @@ extern uint8 erbium_uart_data[0x100], erbium_timer_data[0x10], erbium_plic_data[
 void erbium_devices_reset(void);
 void erbium_devices_supply_clock(DeviceClockType *clock);
 void erbium_plic_set_source(unsigned source, std_bool active);
+Std_ReturnType erbium_uart_receive(uint8 data);
+void erbium_timer_configure(uint32 cpu_frequency, uint32 timer_frequency);
 #endif
