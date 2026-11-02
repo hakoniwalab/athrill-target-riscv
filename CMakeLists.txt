@@ -93,6 +93,9 @@ if(BUILD_TESTING)
     src/device/device.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
+  add_executable(athrill-decode-benchmark test/decode_benchmark.c
+    src/cpu/config/cpu_config.c src/cpu/decode/riscv_decode.c src/cpu/mpu/pmp.c)
+  riscv_target(athrill-decode-benchmark)
 endif()
 
 message(STATUS "Athrill target: RV64I + Zicsr/Zifencei")

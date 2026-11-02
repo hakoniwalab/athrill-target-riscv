@@ -61,24 +61,45 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
 Std_ReturnType cpu_supply_clock(CoreIdType id)
 {
     TargetCoreType *core = &virtual_cpu.cores[id].core;
-    const RiscvDispatchEntry *entry;
+    RiscvDecodedInsn *decoded;
     uint32 insn;
     uint8 length;
     int retired = RISCV_EXEC_TRAP;
     core->reg.x[0] = 0;
     core->access_fault = FALSE;
-    if (!core->is_halt && fetch(core, &insn, &length) == STD_E_OK && !core->access_fault) {
-        entry = length == 4U ? riscv_decode(insn) : NULL;
-        if (entry != NULL) {
-            retired = entry->execute(core, insn);
+    decoded = &core->decode_cache[(core->reg.pc >> 1) & (RISCV_DECODE_CACHE_ENTRIES - 1U)];
+    if (!core->is_halt && decoded->valid && decoded->pc == core->reg.pc &&
+        decoded->pmp_epoch == core->pmp_epoch && decoded->length == 4U) {
+        insn = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8 |
+               (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
+        if (insn == decoded->instruction) {
+            retired = decoded->execute(core, decoded);
+        }
+        else if (riscv_decode_fill(core->reg.pc, insn, 4U, decoded)) {
+            decoded->pmp_epoch = core->pmp_epoch;
+            retired = decoded->execute(core, decoded);
         }
         else {
             core->decoded_code = NULL;
             riscv_raise_exception(core, 2, insn);
         }
     }
-    core->reg.csr.mcycle++;
-    if (retired == RISCV_EXEC_RETIRED) core->reg.csr.minstret++;
+    else if (!core->is_halt && fetch(core, &insn, &length) == STD_E_OK && !core->access_fault) {
+        uint8 *code = NULL;
+        if (length == 4U && riscv_decode_fill(core->reg.pc, insn, length, decoded) &&
+            bus_get_pointer(core->core_id, core->reg.pc, &code) == STD_E_OK) {
+            decoded->code = code;
+            decoded->pmp_epoch = core->pmp_epoch;
+            retired = decoded->execute(core, decoded);
+        }
+        else {
+            decoded->valid = 0;
+            core->decoded_code = NULL;
+            riscv_raise_exception(core, 2, insn);
+        }
+    }
+    core->internal_cycle++;
+    if (retired == RISCV_EXEC_RETIRED) core->internal_instret++;
     core->reg.x[0] = 0;
     virtual_cpu.cores[id].elaps++;
     return STD_E_OK;
@@ -98,4 +119,9 @@ uint32 cpu_get_current_core_sp(void) { return (uint32)virtual_cpu.current_core->
 uint32 cpu_get_current_core_ep(void) { return 0; }
 AthrillAddrType cpu_get_return_addr(const TargetCoreType *core) { return core->reg.x[1]; }
 CoreIdType cpu_get_core_id(const TargetCoreType *core) { return core->core_id; }
-void intc_cpu_trigger_interrupt(CoreIdType id, int intno) { (void)id; (void)intno; }
+void intc_cpu_trigger_interrupt(CoreIdType id, int intno)
+{
+    TargetCoreType *core = &virtual_cpu.cores[id].core;
+    if (intno >= 0 && intno < 64) core->reg.csr.mip |= 1ULL << (unsigned)intno;
+    if ((core->reg.csr.mip & core->reg.csr.mie) != 0) core->is_halt = FALSE;
+}

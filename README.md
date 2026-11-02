@@ -9,7 +9,8 @@ outside this initial skeleton.
 
 The target implements RV64I, Zicsr, Zifencei, and the M-mode `mret` and `wfi`
 instructions. The decoder uses mask/match constants generated from
-`riscv-opcodes` and a two-level opcode/funct3 dispatch table. M, F, and C
+`riscv-opcodes`, a two-level cold decoder, and a direct-mapped predecode cache.
+M, F, and C
 encodings are included in the generated header for the next implementation
 stages, but are not advertised in `misa` or executable yet.
 
@@ -20,11 +21,19 @@ and a temporary byte-oriented serial output register at `0x10000000`. Writing
 the low byte there prints it to standard output. This register will be replaced
 by the Erbium UART model.
 
-Loads, stores, and taken control transfers use strict natural alignment. A
-misaligned access traps with instruction/load/store address-misaligned cause
-rather than being emulated as multiple accesses. `fence` and `fence.i` are
-no-ops for the current single-hart model; there is no decoded-instruction cache
-to invalidate.
+The default `CPU_CONFIG_ERBIUM_COMPAT=1` personality accepts byte-split
+misaligned scalar loads/stores, returns zero from cycle/retired-instruction
+CSRs, and raises cause 30 for `fence.i`; `fence` remains a no-op. Set that
+single compile-time switch to zero for standard RV64 behavior used by Sail
+comparisons. Athrill's internal clock and retirement counters remain live.
+`wfi` uses the existing halt path and is released by an enabled pending
+interrupt.
+
+The 2,048-entry cache is indexed at two-byte PC granularity for future C
+support and stores the executor plus extracted operands and immediate. CPU
+stores invalidate overlapping slots. Hits compare live instruction bytes,
+reset clears all entries, and PMP CSR changes advance a permission epoch, so
+loader/Hakoniwa reloads and protection changes need no core-side hook.
 
 ## Opcode generation
 

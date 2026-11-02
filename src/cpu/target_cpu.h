@@ -13,6 +13,18 @@ typedef enum { CpuMemoryAccess_NONE = 0, CpuMemoryAccess_READ, CpuMemoryAccess_W
 typedef enum { OpCodeId_Illegal = 0, OpCodeId_Num } OpCodeId;
 typedef struct { uint32 instruction; uint8 length; } OpDecodedCodeType;
 
+struct TargetCoreTypeTag;
+struct RiscvDecodedInsn;
+typedef int (*RiscvDecodedExecutor)(struct TargetCoreTypeTag *, const struct RiscvDecodedInsn *);
+typedef struct RiscvDecodedInsn {
+    uint64 pc, immediate;
+    uint32 instruction;
+    RiscvDecodedExecutor execute;
+    uint8 *code;
+    uint64 pmp_epoch;
+    uint8 rd, rs1, rs2, length, aux, valid;
+} RiscvDecodedInsn;
+
 typedef struct {
     uint64 mstatus, misa, mhartid, mtvec, mepc, mcause, mtval, mie, mip, mscratch;
     uint64 medeleg, mideleg, mcounteren, menvcfg;
@@ -31,7 +43,7 @@ typedef struct {
     RiscvCsrType csr;
 } CpuRegisterType;
 
-typedef struct {
+typedef struct TargetCoreTypeTag {
     uint32 real_elaps;
     CoreIdType core_id;
     CpuRegisterType reg;
@@ -39,6 +51,9 @@ typedef struct {
     uint16 *current_code;
     OpDecodedCodeType *decoded_code;
     std_bool access_fault;
+    uint64 internal_cycle, internal_instret, pmp_epoch;
+#define RISCV_DECODE_CACHE_ENTRIES 2048U
+    RiscvDecodedInsn decode_cache[RISCV_DECODE_CACHE_ENTRIES];
 } TargetCoreType;
 
 static inline AthrillAddrType cpu_get_pc(const TargetCoreType *core) { return core->reg.pc; }

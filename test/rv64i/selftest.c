@@ -3,6 +3,7 @@
 static void puts(const char*s){while(*s)SERIAL=(uint8_t)*s++;}
 static void result(const char*n,int ok){puts(ok?"PASS ":"FAIL ");puts(n);puts("\n");}
 static volatile uint64_t mem[4];
+static volatile uint32_t generated_code[2] __attribute__((aligned(4)));
 int main(void){volatile uint64_t a,b,v;int ok;
  puts("Hello RV64I\n");
  a=0x123456789abcdef0ULL;b=0x1111111111111111ULL;result("arithmetic",a+b==0x23456789abcdf001ULL&&a-b==0x0123456789abcddfULL&&(a^b)==0x032547698badcfe1ULL&&(a|b)==0x133557799bbddff1ULL&&(a&b)==0x1010101010101010ULL);
@@ -12,5 +13,8 @@ int main(void){volatile uint64_t a,b,v;int ok;
  mem[0]=0x80ff8001ffffffffULL;{volatile int8_t*s8=(volatile int8_t*)mem;volatile uint8_t*u8=(volatile uint8_t*)mem;volatile int16_t*s16=(volatile int16_t*)mem;volatile uint16_t*u16=(volatile uint16_t*)mem;volatile int32_t*s32=(volatile int32_t*)mem;volatile uint32_t*u32=(volatile uint32_t*)mem;result("loads",s8[0]==-1&&u8[0]==255&&s16[1]==-1&&u16[1]==65535&&s32[0]==-1&&u32[0]==0xffffffffU&&mem[0]==0x80ff8001ffffffffULL);}
  {volatile uint8_t*p=(volatile uint8_t*)&mem[1];*(volatile uint8_t*)(p+0)=0x12;*(volatile uint16_t*)(p+2)=0x3456;*(volatile uint32_t*)(p+4)=0x89abcdefU;mem[2]=0x0123456789abcdefULL;result("stores",p[0]==0x12&&*(volatile uint16_t*)(p+2)==0x3456&&*(volatile uint32_t*)(p+4)==0x89abcdefU&&mem[2]==0x0123456789abcdefULL);}
  {int32_t x=(int32_t)0x7fffffffU,y=1,z;asm volatile("addw %0,%1,%2":"=r"(z):"r"(x),"r"(y));ok=(z==(int32_t)0x80000000U);asm volatile("subw %0,%1,%2":"=r"(z):"r"(y),"r"(x));ok&=(z==(int32_t)0x80000002U);asm volatile("slliw %0,%1,1":"=r"(z):"r"(x));ok&=(z==-2);asm volatile("sraiw %0,%1,1":"=r"(z):"r"((int32_t)0x80000000U));ok&=(z==(int32_t)0xc0000000U);result("word",ok);}
- {uint64_t c0,c1,i0,i1;asm volatile("csrr %0,mcycle":"=r"(c0));asm volatile("csrr %0,minstret":"=r"(i0));asm volatile("nop;nop;nop;nop;nop;nop;nop;nop");asm volatile("csrr %0,mcycle":"=r"(c1));asm volatile("csrr %0,minstret":"=r"(i1));result("counters",c1>c0&&i1>i0&&(c1-c0)==(i1-i0));}
+ {uint8_t*p=(uint8_t*)&mem[3];uint64_t in=0x8877665544332211ULL,out;asm volatile("sd %2,1(%1);ld %0,1(%1)":"=r"(out):"r"(p),"r"(in):"memory");result("misaligned",out==in);}
+ {register uint64_t out asm("a0");generated_code[0]=0x00100513U;generated_code[1]=0x00008067U;asm volatile("jalr ra,0(%1)":"=r"(out):"r"(generated_code):"ra","memory");ok=out==1;generated_code[0]=0x00200513U;asm volatile("jalr ra,0(%1)":"=r"(out):"r"(generated_code):"ra","memory");result("code modification",ok&&out==2);}
+ {uint64_t c,i;asm volatile("csrr %0,mcycle":"=r"(c));asm volatile("csrr %0,minstret":"=r"(i));result("erbium counters",c==0&&i==0);}
+ {uint64_t old,handler,cause=0;asm volatile("csrr %0,mtvec;la %1,1f;csrw mtvec,%1;fence.i;j 2f;1:csrr %2,mcause;csrr t0,mepc;addi t0,t0,4;csrw mepc,t0;mret;2:csrw mtvec,%0":"=&r"(old),"=&r"(handler),"=&r"(cause)::"t0","memory");result("fence.i cause 30",cause==30);}
  puts("SELFTEST DONE\n");return 0;}
