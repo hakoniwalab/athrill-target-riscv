@@ -22,7 +22,7 @@ typedef struct RiscvDecodedInsn {
     RiscvDecodedExecutor execute;
     uint8 *code;
     uint64 pmp_epoch;
-    uint8 rd, rs1, rs2, length, aux, valid;
+    uint8 rd, rs1, rs2, rs3, length, aux, valid;
 } RiscvDecodedInsn;
 
 typedef struct {

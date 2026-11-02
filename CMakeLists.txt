@@ -57,6 +57,7 @@ set(RISCV_CPU_SOURCES
   src/cpu/cpu_exec/op_exec_store.c
   src/cpu/cpu_exec/op_exec_branch.c
   src/cpu/cpu_exec/op_exec_system.c
+  src/cpu/cpu_exec/op_exec_fpu.c
   src/cpu/mpu/pmp.c)
 
 add_library(athrill_riscv_cpu STATIC

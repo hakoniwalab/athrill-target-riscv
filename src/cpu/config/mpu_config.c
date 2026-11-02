@@ -17,6 +17,9 @@ static MpuAddressRegionOperationType serial_ops={get8,get16,get32,put8,put16,put
 
 MpuAddressMapType mpu_address_map={.dynamic_map_num=0,.dynamic_map=NULL,.map={
  {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=SERIAL_ADDR,.size=8,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=serial_data,.ops=&serial_ops},
- {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=0x02004000ULL,.size=0x100,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=erbium_uart_data,.ops=&erbium_uart_ops},
+ /* The Erbium system-register aperture and UART share one region because the
+  * core currently provides four static MPU-map slots.  Unimplemented system
+  * registers read as zero; the UART executor still recognizes its real base. */
+ {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=0x02000000ULL,.size=0x4100,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=erbium_uart_data,.ops=&erbium_uart_ops},
  {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=0x80f40200ULL,.size=0x10,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=erbium_timer_data,.ops=&erbium_timer_ops},
  {.type=DEVICE,.is_malloc=FALSE,.permission=MPU_ADDRESS_REGION_PERM_ALL,.start=0xa0000000ULL,.size=0x200008,.mask=MPU_ADDRESS_REGION_MASK_ALL,.data=erbium_plic_data,.ops=&erbium_plic_ops}}};

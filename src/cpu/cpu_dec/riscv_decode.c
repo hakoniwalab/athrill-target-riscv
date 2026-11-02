@@ -79,10 +79,25 @@ const RiscvDispatchEntry *riscv_decode(uint32 instruction)
 {
 	sint16 index;
 	uint32 direct_index;
+	uint32 scan;
+	uint32 opcode = instruction & 127U;
 	const RiscvDispatchEntry *entry;
 
 	if (!decode_initialized) {
 		riscv_decode_init();
+	}
+	/* OP-FP and the four fused opcodes contain several encodings whose rm
+	 * field is variable.  They cannot share the integer decoder's funct3
+	 * direct slot, so select them by their generated masks. */
+	if ((opcode == 0x53U) || (opcode == 0x43U) || (opcode == 0x47U) ||
+		(opcode == 0x4bU) || (opcode == 0x4fU)) {
+		for (scan = 0U; scan < riscv_instruction_table_count; scan++) {
+			entry = &riscv_instruction_table[scan];
+			if ((instruction & entry->mask) == entry->match) {
+				return entry;
+			}
+		}
+		return 0;
 	}
 	index = decode_heads[instruction & 127U][(instruction >> 12U) & 7U];
 	if (index <= -2) {
@@ -136,6 +151,7 @@ std_bool riscv_decode_fill(
 	decoded->rd = (uint8)((instruction >> 7U) & 31U);
 	decoded->rs1 = (uint8)((instruction >> 15U) & 31U);
 	decoded->rs2 = (uint8)((instruction >> 20U) & 31U);
+	decoded->rs3 = (uint8)((instruction >> 27U) & 31U);
 	decoded->aux = (uint8)((instruction >> 12U) & 7U);
 	decoded->immediate = decode_immediate(instruction, entry->immediate_kind);
 	decoded->execute = entry->execute;

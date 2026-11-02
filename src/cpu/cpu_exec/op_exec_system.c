@@ -123,6 +123,45 @@ static uint64 *csr_pointer(TargetCoreType *core, uint32 number)
 	}
 }
 
+static std_bool fp_csr_access(
+	TargetCoreType *core,
+	uint32 number,
+	uint64 *value,
+	std_bool write)
+{
+	uint32 mask;
+
+	if ((number < 1U) || (number > 3U)) {
+		return FALSE;
+	}
+	if (((core->reg.csr.mstatus >> 13U) & 3U) == 0U) {
+		return FALSE;
+	}
+	mask = (number == 1U) ? 0x8000001fU : ((number == 2U) ? 7U : 0x800000ffU);
+	if (write) {
+		if (number == 1U) {
+			core->reg.fcsr = (core->reg.fcsr & ~mask) | ((uint32)*value & mask);
+		}
+		else if (number == 2U) {
+			core->reg.fcsr = (core->reg.fcsr & ~0xe0U) | (((uint32)*value & 7U) << 5U);
+		}
+		else {
+			core->reg.fcsr = (uint32)*value & mask;
+		}
+		core->reg.csr.mstatus |= 3ULL << 13U;
+	}
+	else if (number == 1U) {
+		*value = core->reg.fcsr & mask;
+	}
+	else if (number == 2U) {
+		*value = (core->reg.fcsr >> 5U) & 7U;
+	}
+	else {
+		*value = core->reg.fcsr & mask;
+	}
+	return TRUE;
+}
+
 static int execute_csr(
 	TargetCoreType *core,
 	const RiscvDecodedInsn *decoded,
@@ -147,6 +186,28 @@ static int execute_csr(
 	user_counter = (number == 0xc00U) || (number == 0xc02U);
 	counter = (number == 0xb00U) || (number == 0xb02U) || user_counter;
 	write = (operation == 1U) || (source != 0U);
+	if ((number >= 1U) && (number <= 3U)) {
+		if (!fp_csr_access(core, number, &old, FALSE)) {
+			riscv_raise_exception(core, 2U, decoded->instruction);
+			return RISCV_EXEC_TRAP;
+		}
+		if (write) {
+			if (operation == 1U) {
+				value = source;
+			}
+			else if (operation == 2U) {
+				value = old | source;
+			}
+			else {
+				value = old & ~source;
+			}
+			(void)fp_csr_access(core, number, &value, TRUE);
+		}
+		if (decoded->rd != 0U) {
+			core->reg.x[decoded->rd] = old;
+		}
+		return op_exec_advance(core, decoded);
+	}
 	if (counter) {
 		if (write && user_counter) {
 			riscv_raise_exception(core, 2U, decoded->instruction);

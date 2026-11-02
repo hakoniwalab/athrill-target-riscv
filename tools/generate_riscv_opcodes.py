@@ -18,7 +18,11 @@ ENABLED = """lui auipc jal jalr beq bne blt bge bltu bgeu lb lh lw lbu lhu
 lwu ld sb sh sw sd addi slti sltiu xori ori andi slli srli srai add sub sll
 slt sltu xor srl sra or and mul mulh mulhsu mulhu div divu rem remu addiw
 slliw srliw sraiw addw subw sllw srlw sraw mulw divw divuw remw remuw fence
-fence_i ecall ebreak mret wfi csrrw csrrs csrrc csrrwi csrrsi csrrci""".split()
+fence_i ecall ebreak mret wfi csrrw csrrs csrrc csrrwi csrrsi csrrci
+flw fsw fmadd_s fmsub_s fnmsub_s fnmadd_s fadd_s fsub_s fmul_s fdiv_s
+fsqrt_s fsgnj_s fsgnjn_s fsgnjx_s fmin_s fmax_s fcvt_w_s fcvt_wu_s
+fmv_x_w feq_s flt_s fle_s fclass_s fcvt_s_w fcvt_s_wu fmv_w_x
+fcvt_l_s fcvt_lu_s fcvt_s_l fcvt_s_lu""".split()
 
 
 def notice(license_text):
@@ -65,7 +69,7 @@ def write_table(path, instructions, header):
     for mnemonic in ENABLED:
         data = instructions[mnemonic]
         function = mnemonic.replace(".", "_")
-        display_name = mnemonic.replace("_", ".") if mnemonic == "fence_i" else mnemonic
+        display_name = mnemonic.replace("_", ".")
         fields = data["variable_fields"]
         entries.append(
             "\t{\n"

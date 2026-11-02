@@ -400,6 +400,156 @@ const RiscvDispatchEntry riscv_instruction_table[] = {
 		0x707fU, 0x7073U,
 		RISCV_OPERAND_RD | RISCV_OPERAND_CSR, RISCV_IMMEDIATE_NONE,
 		op_exec_csrrci, "csrrci", "rv_zicsr"
+	},
+	{
+		0x707fU, 0x2007U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_I,
+		op_exec_flw, "flw", "rv_f"
+	},
+	{
+		0x707fU, 0x2027U,
+		RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_S,
+		op_exec_fsw, "fsw", "rv_f"
+	},
+	{
+		0x600007fU, 0x43U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fmadd_s, "fmadd.s", "rv_f"
+	},
+	{
+		0x600007fU, 0x47U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fmsub_s, "fmsub.s", "rv_f"
+	},
+	{
+		0x600007fU, 0x4bU,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fnmsub_s, "fnmsub.s", "rv_f"
+	},
+	{
+		0x600007fU, 0x4fU,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fnmadd_s, "fnmadd.s", "rv_f"
+	},
+	{
+		0xfe00007fU, 0x53U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fadd_s, "fadd.s", "rv_f"
+	},
+	{
+		0xfe00007fU, 0x8000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fsub_s, "fsub.s", "rv_f"
+	},
+	{
+		0xfe00007fU, 0x10000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fmul_s, "fmul.s", "rv_f"
+	},
+	{
+		0xfe00007fU, 0x18000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fdiv_s, "fdiv.s", "rv_f"
+	},
+	{
+		0xfff0007fU, 0x58000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fsqrt_s, "fsqrt.s", "rv_f"
+	},
+	{
+		0xfe00707fU, 0x20000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fsgnj_s, "fsgnj.s", "rv_f"
+	},
+	{
+		0xfe00707fU, 0x20001053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fsgnjn_s, "fsgnjn.s", "rv_f"
+	},
+	{
+		0xfe00707fU, 0x20002053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fsgnjx_s, "fsgnjx.s", "rv_f"
+	},
+	{
+		0xfe00707fU, 0x28000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fmin_s, "fmin.s", "rv_f"
+	},
+	{
+		0xfe00707fU, 0x28001053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fmax_s, "fmax.s", "rv_f"
+	},
+	{
+		0xfff0007fU, 0xc0000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fcvt_w_s, "fcvt.w.s", "rv_f"
+	},
+	{
+		0xfff0007fU, 0xc0100053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fcvt_wu_s, "fcvt.wu.s", "rv_f"
+	},
+	{
+		0xfff0707fU, 0xe0000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fmv_x_w, "fmv.x.w", "rv_f"
+	},
+	{
+		0xfe00707fU, 0xa0002053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_feq_s, "feq.s", "rv_f"
+	},
+	{
+		0xfe00707fU, 0xa0001053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_flt_s, "flt.s", "rv_f"
+	},
+	{
+		0xfe00707fU, 0xa0000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1 | RISCV_OPERAND_RS2, RISCV_IMMEDIATE_NONE,
+		op_exec_fle_s, "fle.s", "rv_f"
+	},
+	{
+		0xfff0707fU, 0xe0001053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fclass_s, "fclass.s", "rv_f"
+	},
+	{
+		0xfff0007fU, 0xd0000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fcvt_s_w, "fcvt.s.w", "rv_f"
+	},
+	{
+		0xfff0007fU, 0xd0100053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fcvt_s_wu, "fcvt.s.wu", "rv_f"
+	},
+	{
+		0xfff0707fU, 0xf0000053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fmv_w_x, "fmv.w.x", "rv_f"
+	},
+	{
+		0xfff0007fU, 0xc0200053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fcvt_l_s, "fcvt.l.s", "rv64_f"
+	},
+	{
+		0xfff0007fU, 0xc0300053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fcvt_lu_s, "fcvt.lu.s", "rv64_f"
+	},
+	{
+		0xfff0007fU, 0xd0200053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fcvt_s_l, "fcvt.s.l", "rv64_f"
+	},
+	{
+		0xfff0007fU, 0xd0300053U,
+		RISCV_OPERAND_RD | RISCV_OPERAND_RS1, RISCV_IMMEDIATE_NONE,
+		op_exec_fcvt_s_lu, "fcvt.s.lu", "rv64_f"
 	}
 };
 

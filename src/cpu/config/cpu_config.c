@@ -5,8 +5,12 @@
 #include "riscv_decode.h"
 #include "pmp.h"
 #include <string.h>
+#include <inttypes.h>
+#include <stdio.h>
 
 CpuType virtual_cpu;
+uint32 riscv_trace_enabled;
+static uint64 riscv_trace_sequence;
 
 static void reset_core(TargetCoreType *core)
 {
@@ -14,7 +18,7 @@ static void reset_core(TargetCoreType *core)
     memset(core, 0, sizeof(*core));
     core->core_id = id;
     core->reg.privilege = RISCV_PRIV_M;
-    core->reg.csr.misa = (2ULL << 62) | (1ULL << ('I'-'A')) | (1ULL << ('M'-'A')) | (1ULL << ('C'-'A'));
+    core->reg.csr.misa = (2ULL << 62) | (1ULL << ('I'-'A')) | (1ULL << ('M'-'A')) | (1ULL << ('C'-'A')) | (1ULL << ('F'-'A'));
     core->reg.csr.mhartid = id;
 }
 
@@ -66,6 +70,10 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
     uint8 length;
     int retired = RISCV_EXEC_TRAP;
     uint64 pending = core->reg.csr.mip & core->reg.csr.mie;
+    uint64 trace_pc = core->reg.pc;
+    uint64 trace_mstatus = core->reg.csr.mstatus;
+    uint64 trace_mepc = core->reg.csr.mepc;
+    uint64 trace_mcause = core->reg.csr.mcause;
     core->reg.x[0] = 0;
     core->access_fault = FALSE;
     if (pending != 0 && (core->reg.privilege != RISCV_PRIV_M || (core->reg.csr.mstatus & (1ULL << 3)) != 0)) {
@@ -109,6 +117,13 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
         }
     }
 clock_done:
+    if (riscv_trace_enabled && !core->is_halt) {
+        printf("I hart=%u seq=%" PRIu64 " prv=%u pc=%016" PRIx64 " insn=%08x\n", (unsigned)id, riscv_trace_sequence++, (unsigned)core->reg.privilege, trace_pc, insn);
+        if (decoded != NULL && decoded->rd != 0U && retired == RISCV_EXEC_RETIRED) printf("X hart=%u reg=%u value=%016" PRIx64 "\n", (unsigned)id, (unsigned)decoded->rd, core->reg.x[decoded->rd]);
+        if (core->reg.csr.mstatus != trace_mstatus) printf("C hart=%u csr=300 value=%016" PRIx64 "\n", (unsigned)id, core->reg.csr.mstatus);
+        if (core->reg.csr.mepc != trace_mepc) printf("C hart=%u csr=341 value=%016" PRIx64 "\n", (unsigned)id, core->reg.csr.mepc);
+        if (core->reg.csr.mcause != trace_mcause) printf("T hart=%u cause=%016" PRIx64 " tval=%016" PRIx64 " epc=%016" PRIx64 "\n", (unsigned)id, core->reg.csr.mcause, core->reg.csr.mtval, core->reg.csr.mepc);
+    }
     core->internal_cycle++;
     if (retired == RISCV_EXEC_RETIRED) core->internal_instret++;
     core->reg.x[0] = 0;
