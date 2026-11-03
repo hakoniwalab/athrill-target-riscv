@@ -84,6 +84,14 @@ hand-written COMPRESSED_EXPANSIONS table; riscv-opcodes does not describe
 it."""
 
 
+# riscv-opcodes marks registers that must be nonzero (rd_n0, ...) without
+# saying what the zero encoding is. For these instructions rd = x0 is a HINT
+# (RISC-V unprivileged specification, RVC HINT table): it executes and has
+# no effect, so it must not raise an illegal instruction. For the others
+# (c.lwsp, c.ldsp, c.addiw, ...) rd = x0 is reserved.
+RD_ZERO_IS_HINT = {"c_li", "c_lui", "c_mv", "c_add", "c_slli"}
+
+
 def notice(license_text, contents, spdx):
     def comment(text):
         return "".join(" * " + line + "\n" if line else " *\n"
@@ -220,12 +228,16 @@ def write_compressed(path, instructions, header, ranges, latex):
         regs = [register_recipe(value, ranges) for value in (rd, rs1, rs2)]
         scale = min((destination for _, destination, _ in slices), default=0)
         invalid = ["RISCV_COMPRESSED_INVALID_IMMEDIATE"] if nonzero else []
-        if isinstance(rd, str) and rd.endswith("n0") and name != "c_addi":
+        if (isinstance(rd, str) and rd.endswith("n0") and name != "c_addi"
+                and name not in RD_ZERO_IS_HINT):
             invalid.append("RISCV_COMPRESSED_INVALID_RD_ZERO")
         if rd == "rd_n2":
-            invalid += ["RISCV_COMPRESSED_INVALID_RD_ZERO",
-                        "RISCV_COMPRESSED_INVALID_RD_X2"]
-        if isinstance(rs1, str) and rs1.endswith("n0") and name != "c_addi":
+            if name not in RD_ZERO_IS_HINT:
+                invalid.append("RISCV_COMPRESSED_INVALID_RD_ZERO")
+            invalid.append("RISCV_COMPRESSED_INVALID_RD_X2")
+        # c.slli and c.add read rs1 from the rd field: the same HINT rule.
+        if (isinstance(rs1, str) and rs1.endswith("n0") and name != "c_addi"
+                and name not in RD_ZERO_IS_HINT):
             invalid.append("RISCV_COMPRESSED_INVALID_RS1_ZERO")
         if isinstance(rs2, str) and rs2.endswith("n0"):
             invalid.append("RISCV_COMPRESSED_INVALID_RS2_ZERO")

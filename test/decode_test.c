@@ -116,7 +116,12 @@ int main(void)
 		compressed_hash ^= expanded;
 		compressed_hash *= 1099511628211ULL;
 	}
-	if (compressed_hash != 0x8326045460d772a3ULL) {
+	/*
+	 * Pins the expansion of all 65536 halfwords. Update it only together
+	 * with test/crosscheck_decoder.py, which checks the expansion against
+	 * GNU objdump (0 mismatches for this table).
+	 */
+	if (compressed_hash != 0x9f85332ebf3e7a53ULL) {
 		printf("compressed expansion hash: %016llx\n",
 		       (unsigned long long)compressed_hash);
 		return 2;

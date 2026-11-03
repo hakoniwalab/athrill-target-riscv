@@ -131,6 +131,12 @@ if(BUILD_TESTING)
   add_executable(athrill-uart-tx-test test/uart_tx_test.c src/device/peripheral/erbium_uart.c)
   riscv_target(athrill-uart-tx-test)
   add_test(NAME athrill-uart-tx COMMAND athrill-uart-tx-test)
+  # Decoder dump for test/crosscheck_decoder.py (needs Docker; not a CTest).
+  add_executable(athrill-decoder-dump test/decoder_dump.c)
+  riscv_target(athrill-decoder-dump)
+  target_link_libraries(athrill-decoder-dump PRIVATE athrill_riscv_cpu
+    athrill_riscv_device athrill_bus athrill_mpu athrill_std
+    athrill_riscv_config athrill_riscv_device)
   add_executable(athrill-decode-benchmark test/decode_benchmark.c
     ${RISCV_CPU_SOURCES})
   riscv_target(athrill-decode-benchmark)
