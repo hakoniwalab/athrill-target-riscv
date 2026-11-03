@@ -85,8 +85,8 @@ std_bool riscv_decode_fill(
 	uint8 length,
 	RiscvDecodedInsn *decoded);
 std_bool riscv_expand_compressed(uint16 instruction, uint32 *expanded);
-/* The cached entry for pc, or NULL when its page has none yet. */
-static inline RiscvDecodedInsn *riscv_decode_lookup(TargetCoreType *core, uint64 pc)
+/* The decode page holding pc, or NULL when there is none yet. */
+static inline RiscvDecodePage *riscv_decode_page(TargetCoreType *core, uint64 pc)
 {
 	RiscvDecodePage *page =
 		core->decode_pages[(pc >> RISCV_DECODE_PAGE_SHIFT) & (RISCV_DECODE_DIRECTORY_SIZE - 1U)];
@@ -94,7 +94,24 @@ static inline RiscvDecodedInsn *riscv_decode_lookup(TargetCoreType *core, uint64
 	if ((page == NULL) || (page->base != (pc & ~((1ULL << RISCV_DECODE_PAGE_SHIFT) - 1U)))) {
 		return NULL;
 	}
+	return page;
+}
+
+/* The entry for pc in its page. */
+static inline RiscvDecodedInsn *riscv_decode_page_entry(RiscvDecodePage *page, uint64 pc)
+{
 	return &page->entries[(pc & ((1ULL << RISCV_DECODE_PAGE_SHIFT) - 1U)) >> 1U];
+}
+
+/* The cached entry for pc, or NULL when its page has none yet. */
+static inline RiscvDecodedInsn *riscv_decode_lookup(TargetCoreType *core, uint64 pc)
+{
+	RiscvDecodePage *page = riscv_decode_page(core, pc);
+
+	if (page == NULL) {
+		return NULL;
+	}
+	return riscv_decode_page_entry(page, pc);
 }
 
 /* The entry for pc, allocating (or replacing) its page; NULL if out of memory. */

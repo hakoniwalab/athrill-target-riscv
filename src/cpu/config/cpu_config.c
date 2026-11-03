@@ -121,10 +121,10 @@ static Std_ReturnType fetch(TargetCoreType *core, uint32 *instruction, uint8 *le
 	return STD_E_OK;
 }
 
-static std_bool decode_cache_hit(const TargetCoreType *core, const RiscvDecodedInsn *decoded)
+static std_bool decode_cache_hit(const TargetCoreType *core, const RiscvDecodedInsn *decoded, uint64 pc)
 {
 	return decoded->valid
-		&& decoded->pc == core->reg.pc
+		&& decoded->pc == pc
 		&& decoded->pmp_epoch == core->pmp_epoch
 		&& decoded->privilege == core->reg.privilege;
 }
@@ -163,7 +163,7 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 		goto clock_done;
 	}
 	decoded = riscv_decode_lookup(core, core->reg.pc);
-	use_entry = !core->is_halt && (decoded != NULL) && decode_cache_hit(core, decoded);
+	use_entry = !core->is_halt && (decoded != NULL) && decode_cache_hit(core, decoded, core->reg.pc);
 	if (use_entry) {
 		/*
 		 * Reuse the entry only while the bytes in memory are unchanged;
@@ -254,6 +254,17 @@ clock_done:
 	return STD_E_OK;
 }
 
+/* The instruction bytes in memory are still the ones the entry was decoded from. */
+static inline std_bool code_unchanged(const RiscvDecodedInsn *decoded)
+{
+	uint32 raw = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8;
+
+	if (decoded->length == 4U) {
+		raw |= (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
+	}
+	return raw == decoded->raw;
+}
+
 /*
  * Batched execution (ATHRILL_TARGET_BATCH_CLOCKS, see std_cpu_ops.h).
  *
@@ -281,21 +292,13 @@ static std_bool batch_can_continue(const TargetCoreType *core)
 static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
 {
 	RiscvDecodedInsn *decoded;
-	uint32 raw;
 	int retired;
 
 	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
 		return FALSE;
 	}
 	decoded = riscv_decode_lookup(core, core->reg.pc);
-	if ((decoded == NULL) || !decode_cache_hit(core, decoded)) {
-		return FALSE;
-	}
-	raw = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8;
-	if (decoded->length == 4U) {
-		raw |= (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
-	}
-	if (raw != decoded->raw) {
+	if ((decoded == NULL) || !decode_cache_hit(core, decoded, core->reg.pc) || !code_unchanged(decoded)) {
 		return FALSE;
 	}
 	core->access_fault = FALSE;
@@ -309,23 +312,134 @@ static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
 	return TRUE;
 }
 
+/*
+ * Straight-line blocks. A cached entry can start a block: the cached
+ * instructions from it up to and including the first that may change the
+ * control flow or the machine state (branches, jumps, SYSTEM: CSR access,
+ * ecall, mret, wfi; MISC-MEM: fence), all in one decode page. Each entry
+ * of a block is checked like execute_cached() checks one when the block is
+ * built, so running it needs no check per instruction. Every store into
+ * code (riscv_decode_cache_invalidate) advances the page generation, which
+ * drops the page's blocks; a refilled entry starts without one.
+ *
+ * Within a block nothing but the instructions changes the interrupt state:
+ * CSR accesses end it, and a device register access ends it (and the batch)
+ * right after the instruction, as in execute_cached(). An instruction that
+ * traps leaves the pc off the next entry and ends it too. So a block gives
+ * the same clocks and results as its instructions one by one.
+ */
+#define RISCV_BLOCK_MAX_LENGTH 64U
+
+static std_bool ends_block(uint32 instruction)
+{
+	switch (instruction & 0x7fU) {
+	case 0x63U:	/* branches */
+	case 0x6fU:	/* jal */
+	case 0x67U:	/* jalr */
+	case 0x73U:	/* SYSTEM */
+	case 0x0fU:	/* MISC-MEM */
+		return TRUE;
+	default:
+		return FALSE;
+	}
+}
+
+static uint8 build_block(TargetCoreType *core, RiscvDecodePage *page, RiscvDecodedInsn *first)
+{
+	RiscvDecodedInsn *entry = first;
+	uint64 pc = first->pc;
+	uint8 length = 0U;
+
+	while ((length < RISCV_BLOCK_MAX_LENGTH) && decode_cache_hit(core, entry, pc) && code_unchanged(entry)) {
+		length++;
+		if (ends_block(entry->instruction)) {
+			break;
+		}
+		pc += entry->length;
+		if (riscv_decode_page(core, pc) != page) {
+			break;
+		}
+		entry = riscv_decode_page_entry(page, pc);
+	}
+	first->block_length = length;
+	first->block_generation = page->generation;
+	return length;
+}
+
+/*
+ * Runs the block at the pc if it fits in budget clocks; returns the clocks
+ * used (0: none run, the caller goes on one instruction at a time).
+ */
+static inline uint64 execute_block(TargetCoreType *core, CoreIdType id, uint64 budget, uint64 *clock)
+{
+	uint64 pc = core->reg.pc;
+	RiscvDecodePage *page;
+	RiscvDecodedInsn *entry;
+	uint64 length;
+	uint64 done;
+	int retired;
+
+	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
+		return 0U;
+	}
+	page = riscv_decode_page(core, pc);
+	if (page == NULL) {
+		return 0U;
+	}
+	entry = riscv_decode_page_entry(page, pc);
+	if (!decode_cache_hit(core, entry, pc)) {
+		return 0U;
+	}
+	if ((entry->block_length == 0U) || (entry->block_generation != page->generation)) {
+		(void)build_block(core, page, entry);
+	}
+	length = entry->block_length;
+	if ((length == 0U) || (length > budget)) {
+		return 0U;
+	}
+	for (done = 1U; ; done++) {
+		(*clock)++;
+		core->access_fault = FALSE;
+		retired = entry->execute(core, entry);
+		core->internal_cycle++;
+		if (retired == RISCV_EXEC_RETIRED) {
+			core->internal_instret++;
+		}
+		core->reg.x[0] = 0;
+		if ((done == length) || (core->reg.pc != entry->pc + entry->length) || riscv_device_accessed) {
+			break;
+		}
+		entry += entry->length >> 1U;
+	}
+	virtual_cpu.cores[id].elaps += done;
+	return done;
+}
+
 Std_ReturnType cpu_supply_clocks(CoreIdType core_id, uint64 max_clocks, uint64 *clock, uint64 *executed)
 {
 	TargetCoreType *core = &virtual_cpu.cores[core_id].core;
 	Std_ReturnType err = STD_E_OK;
-	uint64 n;
+	uint64 n = 0U;
+	uint64 done;
 
-	for (n = 0U; n < max_clocks; n++) {
+	while (n < max_clocks) {
 		if (!batch_can_continue(core)) {
 			break;
 		}
+		if (!riscv_trace_enabled) {
+			done = execute_block(core, core_id, max_clocks - n, clock);
+			if (done != 0U) {
+				n += done;
+				continue;
+			}
+		}
 		(*clock)++;
+		n++;
 		if (!riscv_trace_enabled && execute_cached(core, core_id)) {
 			continue;
 		}
 		err = cpu_supply_clock(core_id);
 		if (err != STD_E_OK) {
-			n++;
 			break;
 		}
 	}

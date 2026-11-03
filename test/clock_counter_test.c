@@ -1,7 +1,8 @@
 /*
  * CPU clock and instruction counters, traps, the decode cache after code
  * modification, misaligned accesses, Erbium counter CSRs, fence.i, wfi,
- * the timer and the PLIC, driven directly through cpu_supply_clock().
+ * the timer and the PLIC, driven directly through cpu_supply_clock(), and
+ * a block after a store into its code, through cpu_supply_clocks().
  *
  * Instruction words used (hand-assembled):
  *   0x00108093 addi x1, x1, 1      0x00000073 ecall
@@ -116,6 +117,35 @@ static void check_modified_code(void)
 	check("rewritten instruction runs in its new form", core->reg.x[5] == 2U);
 }
 
+/*
+ * Batched execution runs straight-line blocks of cached instructions. A
+ * store into a block's code, here its second instruction, must drop it:
+ *   0: addi x6, x6, 0      32: sw x7, 4(x0)
+ *   4: addi x5, x5, 1      36: jal x0, -36
+ *   8: jal x0, -8
+ */
+static void check_block_after_store(void)
+{
+	TargetCoreType *core = reset_core();
+	uint64 clock = 0;
+	uint64 executed = 0;
+
+	put_insn(0, 0x00030313U);
+	put_insn(4, 0x00128293U);
+	put_insn(8, 0xff9ff06fU);
+	put_insn(32, 0x00702223U);
+	put_insn(36, 0xfddff06fU);
+	core->reg.x[7] = 0x01028293U;	/* addi x5, x5, 16 */
+	riscv_device_accessed = FALSE;	/* left set by the device accesses before */
+	(void)cpu_supply_clocks(0, 21, &clock, &executed);
+	check("a batch of 21 clocks runs the loop 7 times",
+		core->reg.x[5] == 7U && clock == 21U && executed == 21U && core->internal_cycle == 21U);
+	core->reg.pc = 32;
+	(void)cpu_supply_clocks(0, 8, &clock, &executed);
+	check("after a store into the loop, its new instruction runs",
+		core->reg.x[5] == 39U && clock == 29U && executed == 8U && core->reg.pc == 0U);
+}
+
 static void check_misaligned_doubleword(void)
 {
 	TargetCoreType *core = reset_core();
@@ -205,6 +235,7 @@ int main(void)
 	device_init(&virtual_cpu, &clock);
 	check_counters_and_traps(&clock);
 	check_modified_code();
+	check_block_after_store();
 	check_misaligned_doubleword();
 	check_counter_csr();
 	check_fence_i();

@@ -266,6 +266,7 @@ std_bool riscv_decode_fill(
 	decoded->immediate = decode_immediate(instruction, entry->immediate_kind);
 	decoded->execute = entry->execute;
 	select_specialisation(decoded);
+	decoded->block_length = 0U;
 	decoded->valid = 1U;
 	return TRUE;
 }
@@ -305,6 +306,7 @@ void riscv_decode_cache_invalidate(
 	uint64 first;
 	uint64 last = address + size - 1U;
 	uint64 position;
+	RiscvDecodePage *page;
 	RiscvDecodedInsn *entry;
 
 	/* A 4-byte instruction may start up to 3 bytes before the store. */
@@ -315,10 +317,14 @@ void riscv_decode_cache_invalidate(
 		first = 0U;
 	}
 	for (position = first & ~1ULL; position <= last; position += 2U) {
-		entry = riscv_decode_lookup(core, position);
-		if ((entry != NULL) && entry->valid && (entry->pc <= last) &&
-			(entry->pc + entry->length > address)) {
+		page = riscv_decode_page(core, position);
+		if (page == NULL) {
+			continue;
+		}
+		entry = riscv_decode_page_entry(page, position);
+		if (entry->valid && (entry->pc <= last) && (entry->pc + entry->length > address)) {
 			entry->valid = 0U;
+			page->generation++;
 		}
 	}
 }

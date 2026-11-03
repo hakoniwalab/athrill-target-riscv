@@ -29,6 +29,12 @@ typedef struct RiscvDecodedInsn {
     uint64 pmp_epoch;
     RiscvPrivilege privilege;
     uint8 rd, rs1, rs2, rs3, length, aux, valid;
+    /*
+     * The straight-line block that starts here (cpu_config.c): its length in
+     * instructions (0: none yet) and the page generation it was built in.
+     */
+    uint8 block_length;
+    uint32 block_generation;
 } RiscvDecodedInsn;
 
 typedef struct {
@@ -74,6 +80,8 @@ typedef struct {
 #define RISCV_DECODE_DIRECTORY_SIZE 4096U
 typedef struct RiscvDecodePage {
     uint64 base;
+    /* Advanced whenever an entry is invalidated; drops the page's blocks. */
+    uint32 generation;
     RiscvDecodedInsn entries[RISCV_DECODE_PAGE_ENTRIES];
 } RiscvDecodePage;
 
