@@ -1,6 +1,6 @@
 diff --git a/boards/aifoundry/erbium/init/rc.board_extras b/boards/aifoundry/erbium/init/rc.board_extras
 new file mode 100644
-index 0000000000..9172794a46
+index 0000000000..4398aef6c2
 --- /dev/null
 +++ b/boards/aifoundry/erbium/init/rc.board_extras
 @@ -0,0 +1,11 @@
@@ -13,7 +13,7 @@ index 0000000000..9172794a46
 +# UART carries MAVLink for a ground station.
 +if [ -e /dev/kmsg ]
 +then
-+	mavlink start -d /dev/ttyS0 -b 57600 -r 2000 -x
++	mavlink start -d /dev/ttyS0 -b 921600 -r 40000 -x
 +fi
 diff --git a/boards/aifoundry/erbium/mavlink.px4board b/boards/aifoundry/erbium/mavlink.px4board
 new file mode 100644
