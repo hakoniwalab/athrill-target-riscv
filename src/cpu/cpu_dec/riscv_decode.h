@@ -85,6 +85,22 @@ std_bool riscv_decode_fill(
 	uint8 length,
 	RiscvDecodedInsn *decoded);
 std_bool riscv_expand_compressed(uint16 instruction, uint32 *expanded);
+/* The cached entry for pc, or NULL when its page has none yet. */
+static inline RiscvDecodedInsn *riscv_decode_lookup(TargetCoreType *core, uint64 pc)
+{
+	RiscvDecodePage *page =
+		core->decode_pages[(pc >> RISCV_DECODE_PAGE_SHIFT) & (RISCV_DECODE_DIRECTORY_SIZE - 1U)];
+
+	if ((page == NULL) || (page->base != (pc & ~((1ULL << RISCV_DECODE_PAGE_SHIFT) - 1U)))) {
+		return NULL;
+	}
+	return &page->entries[(pc & ((1ULL << RISCV_DECODE_PAGE_SHIFT) - 1U)) >> 1U];
+}
+
+/* The entry for pc, allocating (or replacing) its page; NULL if out of memory. */
+RiscvDecodedInsn *riscv_decode_slot(TargetCoreType *core, uint64 pc);
+/* Frees all pages (core reset). */
+void riscv_decode_cache_clear(TargetCoreType *core);
 void riscv_decode_cache_invalidate(
 	TargetCoreType *core,
 	uint64 address,

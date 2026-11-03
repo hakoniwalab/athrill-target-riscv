@@ -12,6 +12,7 @@
 #include "cpu.h"
 #include "std_cpu_ops.h"
 #include "std_device_ops.h"
+#include "riscv_decode.h"
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -62,7 +63,10 @@ int main(int argc, char **argv)
 	start = now();
 	for (n = 0; n < BENCHMARK_INSTRUCTIONS; n++) {
 		if (decode_every_time) {
-			core->decode_cache[(core->reg.pc >> 1) & (RISCV_DECODE_CACHE_ENTRIES - 1U)].valid = 0;
+			RiscvDecodedInsn *entry = riscv_decode_lookup(core, core->reg.pc);
+			if (entry != NULL) {
+				entry->valid = 0;
+			}
 		}
 		cpu_supply_clock(0);
 	}

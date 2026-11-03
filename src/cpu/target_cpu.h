@@ -62,6 +62,21 @@ typedef struct {
     uint64 hi[16];
 } RiscvPmpTable;
 
+/*
+ * Decode cache: an array of decoded instructions for each 4 KiB page of
+ * code (one entry per halfword), allocated when the page is first run and
+ * found through a directory indexed by the page number. The directory
+ * covers 16 MiB of code without two pages sharing a slot; pages further
+ * apart replace each other.
+ */
+#define RISCV_DECODE_PAGE_SHIFT 12U
+#define RISCV_DECODE_PAGE_ENTRIES (1U << (RISCV_DECODE_PAGE_SHIFT - 1U))
+#define RISCV_DECODE_DIRECTORY_SIZE 4096U
+typedef struct RiscvDecodePage {
+    uint64 base;
+    RiscvDecodedInsn entries[RISCV_DECODE_PAGE_ENTRIES];
+} RiscvDecodePage;
+
 /* The ROM/RAM region a core accessed last, for direct loads and stores. */
 typedef struct {
     std_bool valid;
@@ -84,8 +99,8 @@ typedef struct TargetCoreTypeTag {
     RiscvMemoryWindow memory_window;
     uint64 trace_store_address, trace_store_value;
     uint8 trace_store_size, trace_store_valid;
-#define RISCV_DECODE_CACHE_ENTRIES 16384U
-    RiscvDecodedInsn decode_cache[RISCV_DECODE_CACHE_ENTRIES];
+    /* Decoded instructions, one page per 4 KiB of code (riscv_decode.h). */
+    struct RiscvDecodePage *decode_pages[RISCV_DECODE_DIRECTORY_SIZE];
 } TargetCoreType;
 
 static inline AthrillAddrType cpu_get_pc(const TargetCoreType *core) { return core->reg.pc; }

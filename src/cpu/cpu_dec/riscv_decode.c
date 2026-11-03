@@ -1,4 +1,5 @@
 #include "riscv_decode.h"
+#include <stdlib.h>
 
 #define RISCV_OPCODE_COUNT 128U
 #define RISCV_FUNCT3_COUNT 8U
@@ -269,6 +270,33 @@ std_bool riscv_decode_fill(
 	return TRUE;
 }
 
+RiscvDecodedInsn *riscv_decode_slot(TargetCoreType *core, uint64 pc)
+{
+	uint64 base = pc & ~((1ULL << RISCV_DECODE_PAGE_SHIFT) - 1U);
+	RiscvDecodePage **slot =
+		&core->decode_pages[(pc >> RISCV_DECODE_PAGE_SHIFT) & (RISCV_DECODE_DIRECTORY_SIZE - 1U)];
+
+	if ((*slot == NULL) || ((*slot)->base != base)) {
+		free(*slot);
+		*slot = calloc(1U, sizeof(RiscvDecodePage));
+		if (*slot == NULL) {
+			return NULL;
+		}
+		(*slot)->base = base;
+	}
+	return &(*slot)->entries[(pc & ((1ULL << RISCV_DECODE_PAGE_SHIFT) - 1U)) >> 1U];
+}
+
+void riscv_decode_cache_clear(TargetCoreType *core)
+{
+	uint32 index;
+
+	for (index = 0U; index < RISCV_DECODE_DIRECTORY_SIZE; index++) {
+		free(core->decode_pages[index]);
+		core->decode_pages[index] = NULL;
+	}
+}
+
 void riscv_decode_cache_invalidate(
 	TargetCoreType *core,
 	uint64 address,
@@ -279,6 +307,7 @@ void riscv_decode_cache_invalidate(
 	uint64 position;
 	RiscvDecodedInsn *entry;
 
+	/* A 4-byte instruction may start up to 3 bytes before the store. */
 	if (address >= 3U) {
 		first = address - 3U;
 	}
@@ -286,9 +315,8 @@ void riscv_decode_cache_invalidate(
 		first = 0U;
 	}
 	for (position = first & ~1ULL; position <= last; position += 2U) {
-		entry = &core->decode_cache[
-			(position >> 1U) & (RISCV_DECODE_CACHE_ENTRIES - 1U)];
-		if (entry->valid && (entry->pc <= last) &&
+		entry = riscv_decode_lookup(core, position);
+		if ((entry != NULL) && entry->valid && (entry->pc <= last) &&
 			(entry->pc + entry->length > address)) {
 			entry->valid = 0U;
 		}

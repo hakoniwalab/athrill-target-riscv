@@ -31,6 +31,7 @@ void riscv_trace_store(
 static void reset_core(TargetCoreType *core)
 {
 	CoreIdType id = core->core_id;
+	riscv_decode_cache_clear(core);
 	memset(core, 0, sizeof(*core));
 	core->core_id = id;
 	core->reg.privilege = RISCV_PRIV_M;
@@ -161,8 +162,8 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 		core->is_halt = FALSE;
 		goto clock_done;
 	}
-	decoded = &core->decode_cache[(core->reg.pc >> 1) & (RISCV_DECODE_CACHE_ENTRIES - 1U)];
-	use_entry = !core->is_halt && decode_cache_hit(core, decoded);
+	decoded = riscv_decode_lookup(core, core->reg.pc);
+	use_entry = !core->is_halt && (decoded != NULL) && decode_cache_hit(core, decoded);
 	if (use_entry) {
 		/*
 		 * Reuse the entry only while the bytes in memory are unchanged;
@@ -179,7 +180,9 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 		&& !core->access_fault) {
 		uint8 *code = NULL;
 		uint32 expanded = insn;
-		if ((length == 4U || riscv_expand_compressed((uint16)insn, &expanded)) &&
+		decoded = riscv_decode_slot(core, core->reg.pc);
+		if ((decoded != NULL) &&
+		    (length == 4U || riscv_expand_compressed((uint16)insn, &expanded)) &&
 		    riscv_decode_fill(core->reg.pc, expanded, length, decoded) &&
 		    bus_get_pointer(core->core_id, core->reg.pc, &code) == STD_E_OK) {
 			decoded->code = code;
@@ -190,7 +193,9 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 				decoded->valid = 0;
 			}
 		} else {
-			decoded->valid = 0;
+			if (decoded != NULL) {
+				decoded->valid = 0;
+			}
 			core->decoded_code = NULL;
 			riscv_raise_exception(core, 2, insn);
 		}
@@ -282,8 +287,8 @@ static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
 	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
 		return FALSE;
 	}
-	decoded = &core->decode_cache[(core->reg.pc >> 1) & (RISCV_DECODE_CACHE_ENTRIES - 1U)];
-	if (!decode_cache_hit(core, decoded)) {
+	decoded = riscv_decode_lookup(core, core->reg.pc);
+	if ((decoded == NULL) || !decode_cache_hit(core, decoded)) {
 		return FALSE;
 	}
 	raw = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8;
