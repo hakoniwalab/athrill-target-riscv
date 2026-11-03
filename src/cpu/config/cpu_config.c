@@ -134,23 +134,6 @@ static void decode_cache_remember_permission(const TargetCoreType *core, RiscvDe
 	decoded->privilege = core->reg.privilege;
 }
 
-/*
- * Batched execution (ATHRILL_TARGET_BATCH_CLOCKS): the next instruction may
- * run without a device tick unless the CPU halted or the last instruction
- * touched a device register (which may have moved a device event).
- */
-std_bool cpu_batch_can_continue(CoreIdType core_id)
-{
-	if (virtual_cpu.cores[core_id].core.is_halt) {
-		return FALSE;
-	}
-	if (riscv_device_accessed) {
-		riscv_device_accessed = FALSE;
-		return FALSE;
-	}
-	return TRUE;
-}
-
 Std_ReturnType cpu_supply_clock(CoreIdType id)
 {
 	TargetCoreType *core = &virtual_cpu.cores[id].core;
@@ -264,6 +247,85 @@ clock_done:
 	core->reg.x[0] = 0;
 	virtual_cpu.cores[id].elaps++;
 	return STD_E_OK;
+}
+
+/*
+ * Batched execution (ATHRILL_TARGET_BATCH_CLOCKS, see std_cpu_ops.h).
+ *
+ * A batch continues unless the CPU halted or the last instruction touched
+ * a device register (which may have moved a device event).
+ */
+static std_bool batch_can_continue(const TargetCoreType *core)
+{
+	if (core->is_halt) {
+		return FALSE;
+	}
+	if (riscv_device_accessed) {
+		riscv_device_accessed = FALSE;
+		return FALSE;
+	}
+	return TRUE;
+}
+
+/*
+ * The common case of cpu_supply_clock(), without its general handling:
+ * no interrupt pending, the instruction in the decode cache with its bytes
+ * unchanged, and no trace. Returns FALSE (nothing done) otherwise, and the
+ * caller runs cpu_supply_clock().
+ */
+static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
+{
+	RiscvDecodedInsn *decoded;
+	uint32 raw;
+	int retired;
+
+	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
+		return FALSE;
+	}
+	decoded = &core->decode_cache[(core->reg.pc >> 1) & (RISCV_DECODE_CACHE_ENTRIES - 1U)];
+	if (!decode_cache_hit(core, decoded)) {
+		return FALSE;
+	}
+	raw = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8;
+	if (decoded->length == 4U) {
+		raw |= (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
+	}
+	if (raw != decoded->raw) {
+		return FALSE;
+	}
+	core->access_fault = FALSE;
+	retired = decoded->execute(core, decoded);
+	core->internal_cycle++;
+	if (retired == RISCV_EXEC_RETIRED) {
+		core->internal_instret++;
+	}
+	core->reg.x[0] = 0;
+	virtual_cpu.cores[id].elaps++;
+	return TRUE;
+}
+
+Std_ReturnType cpu_supply_clocks(CoreIdType core_id, uint64 max_clocks, uint64 *clock, uint64 *executed)
+{
+	TargetCoreType *core = &virtual_cpu.cores[core_id].core;
+	Std_ReturnType err = STD_E_OK;
+	uint64 n;
+
+	for (n = 0U; n < max_clocks; n++) {
+		if (!batch_can_continue(core)) {
+			break;
+		}
+		(*clock)++;
+		if (!riscv_trace_enabled && execute_cached(core, core_id)) {
+			continue;
+		}
+		err = cpu_supply_clock(core_id);
+		if (err != STD_E_OK) {
+			n++;
+			break;
+		}
+	}
+	*executed = n;
+	return err;
 }
 
 void cpu_illegal_opcode_trap(CoreIdType id)
