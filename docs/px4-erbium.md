@@ -13,7 +13,7 @@ versions listed at the end.
 ## Requirements
 
 - macOS or Linux, on arm64 or x86_64
-- Git, CMake 3.16 or later, a C/C++ compiler (Clang or GCC), Python 3
+- Git, curl, tar, CMake 3.16 or later, a C/C++ compiler (Clang or GCC)
 - Docker (PX4 is built in PX4's own build image)
 - About 6 GB of free disk space (PX4 with its submodules and build)
 
@@ -46,14 +46,16 @@ case "$(docker info --format '{{.Architecture}}')" in
   *) XPACK_ARCH=x64 ;;
 esac
 mkdir -p tools
-docker run --rm -v "$PWD/tools:/tools" -w /tools ubuntu:24.04 bash -c "
-  apt-get update -qq &&
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl > /dev/null &&
-  curl -L --fail --retry 3 -o xpack.tar.gz \
-    https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v15.2.0-1/xpack-riscv-none-elf-gcc-15.2.0-1-linux-${XPACK_ARCH}.tar.gz &&
-  tar -xzf xpack.tar.gz && rm xpack.tar.gz"
+curl -L --fail --retry 3 -o tools/xpack.tar.gz \
+  "https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v15.2.0-1/xpack-riscv-none-elf-gcc-15.2.0-1-linux-${XPACK_ARCH}.tar.gz"
+tar -xzf tools/xpack.tar.gz -C tools
+rm tools/xpack.tar.gz
 ls tools/xpack-riscv-none-elf-gcc-15.2.0-1/bin/riscv-none-elf-gcc
 ```
+
+The archive is the Linux toolchain for the build container; it is unpacked on
+the host (unpacking it inside a container onto a host directory fails on
+macOS).
 
 ## 3. Build PX4 for Erbium
 
