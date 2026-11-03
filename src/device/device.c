@@ -3,6 +3,9 @@
 #include "intc.h"
 #include "peripheral/erbium_devices.h"
 #include "std_device_ops.h"
+#ifdef EXDEV_ENABLE
+#include "athrill_device.h"
+#endif
 
 /* Erbium: 200 MHz system clock, 2 MHz mtime (100 clocks per mtime tick). */
 #define DEFAULT_CPU_FREQUENCY_MHZ 200U
@@ -11,6 +14,9 @@
 extern uint32 riscv_trace_enabled;
 
 std_bool riscv_device_accessed = FALSE;
+#ifdef EXDEV_ENABLE
+static std_bool exdev_initialized = FALSE;
+#endif
 
 void erbium_devices_reset(void)
 {
@@ -69,6 +75,18 @@ void device_supply_clock(DeviceClockType *clock)
 	clock->can_skip_clock = TRUE;
 	clock->min_intr_interval = DEVICE_CLOCK_MAX_INTERVAL;
 	erbium_devices_supply_clock(clock);
+#ifdef EXDEV_ENABLE
+	/*
+	 * External devices (memory.txt DEV) are registered when the program is
+	 * loaded, after device_init(): they are initialised at the first tick,
+	 * once (a reset keeps them). They may shorten min_intr_interval too.
+	 */
+	if (!exdev_initialized) {
+		device_init_athrill_exdev();
+		exdev_initialized = TRUE;
+	}
+	device_supply_clock_exdev(clock);
+#endif
 }
 
 void device_get_clock(DeviceClockType *clock)

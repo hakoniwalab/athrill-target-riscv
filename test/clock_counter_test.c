@@ -28,6 +28,18 @@
 
 static unsigned failures;
 
+#ifdef EXDEV_ENABLE
+/* No external devices in this test. */
+void device_supply_clock_exdev(DeviceClockType *clock)
+{
+	(void)clock;
+}
+
+void device_init_athrill_exdev(void)
+{
+}
+#endif
+
 Std_ReturnType cpuemu_get_devcfg_value(const char *key, uint32 *value)
 {
 	(void)key;
