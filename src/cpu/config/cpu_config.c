@@ -314,9 +314,11 @@ static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
 
 /*
  * Straight-line blocks. A cached entry can start a block: the cached
- * instructions from it up to and including the first that may change the
- * control flow or the machine state (branches, jumps, SYSTEM: CSR access,
- * ecall, mret, wfi; MISC-MEM: fence), all in one decode page. Each entry
+ * instructions from it up to and including the first jump or instruction
+ * that may change the machine state (jal, jalr; SYSTEM: CSR access, ecall,
+ * mret, wfi; MISC-MEM: fence), all in one decode page. A conditional branch
+ * does not end a block: taken, it leaves the pc off the next entry, which
+ * ends the block like a trap does; not taken, the block goes on. Each entry
  * of a block is checked like execute_cached() checks one when the block is
  * built, so running it needs no check per instruction. Every store into
  * code (riscv_decode_cache_invalidate) advances the page generation, which
@@ -333,7 +335,6 @@ static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
 static std_bool ends_block(uint32 instruction)
 {
 	switch (instruction & 0x7fU) {
-	case 0x63U:	/* branches */
 	case 0x6fU:	/* jal */
 	case 0x67U:	/* jalr */
 	case 0x73U:	/* SYSTEM */
@@ -376,7 +377,8 @@ static inline uint64 execute_block(TargetCoreType *core, CoreIdType id, uint64 b
 	RiscvDecodePage *page;
 	RiscvDecodedInsn *entry;
 	uint64 length;
-	uint64 done;
+	uint64 done = 0U;
+	uint64 trapped = 0U;
 	int retired;
 
 	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
@@ -397,20 +399,43 @@ static inline uint64 execute_block(TargetCoreType *core, CoreIdType id, uint64 b
 	if ((length == 0U) || (length > budget)) {
 		return 0U;
 	}
-	for (done = 1U; ; done++) {
+	/*
+	 * Only CSR instructions read or write the cycle and instruction
+	 * counters, and a CSR instruction can only be the last of a block. So
+	 * the counters are brought up to date once, before the last
+	 * instruction or when the block ends early, instead of after each
+	 * instruction. A faulting instruction ends the block, so access_fault
+	 * is cleared once.
+	 */
+	core->access_fault = FALSE;
+	while (done + 1U < length) {
 		(*clock)++;
-		core->access_fault = FALSE;
 		retired = entry->execute(core, entry);
-		core->internal_cycle++;
-		if (retired == RISCV_EXEC_RETIRED) {
-			core->internal_instret++;
+		done++;
+		if (retired != RISCV_EXEC_RETIRED) {
+			trapped++;
 		}
 		core->reg.x[0] = 0;
-		if ((done == length) || (core->reg.pc != entry->pc + entry->length) || riscv_device_accessed) {
-			break;
+		if ((core->reg.pc != entry->pc + entry->length) || core->access_fault || riscv_device_accessed) {
+			goto ended;
 		}
 		entry += entry->length >> 1U;
 	}
+	core->internal_cycle += done;
+	core->internal_instret += done - trapped;
+	(*clock)++;
+	retired = entry->execute(core, entry);
+	done++;
+	core->internal_cycle++;
+	if (retired == RISCV_EXEC_RETIRED) {
+		core->internal_instret++;
+	}
+	core->reg.x[0] = 0;
+	virtual_cpu.cores[id].elaps += done;
+	return done;
+ended:
+	core->internal_cycle += done;
+	core->internal_instret += done - trapped;
 	virtual_cpu.cores[id].elaps += done;
 	return done;
 }

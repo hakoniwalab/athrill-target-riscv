@@ -29,8 +29,9 @@ on the AIFoundry Erbium board's NuttX environment, with Hakoniwa.
   first execution. A cache hit is reused only at the same
   privilege and PMP setting it was fetched with, and only when the
   instruction bytes are unchanged. In batched execution, runs of cached
-  instructions up to the next branch, jump or system instruction execute as
-  one block without per-instruction checks; a store into a block's code
+  instructions up to the next jump or system instruction (through
+  conditional branches not taken) execute as one block without
+  per-instruction checks; a store into a block's code
   drops it. Results and clocks are the same as one instruction at a time.
 
 ## PX4

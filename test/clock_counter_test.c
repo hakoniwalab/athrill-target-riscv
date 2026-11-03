@@ -146,6 +146,59 @@ static void check_block_after_store(void)
 		core->reg.x[5] == 39U && clock == 29U && executed == 8U && core->reg.pc == 0U);
 }
 
+/*
+ * A conditional branch inside a block: taken, it leaves the block; not
+ * taken, the block goes on.
+ *   0: addi x5, x5, 1      8: addi x7, x7, 1
+ *   4: bne x5, x6, -4     12: jal x0, 0
+ */
+static void check_block_through_branch(void)
+{
+	TargetCoreType *core = reset_core();
+	uint64 clock = 0;
+	uint64 executed = 0;
+
+	put_insn(0, 0x00128293U);
+	put_insn(4, 0xfe629ee3U);
+	put_insn(8, 0x00138393U);
+	put_insn(12, 0x0000006fU);
+	core->reg.x[6] = 5;
+	riscv_device_accessed = FALSE;
+	(void)cpu_supply_clocks(0, 11, &clock, &executed);
+	check("a loop on bne runs 5 times, then the block goes on past it",
+		core->reg.x[5] == 5U && core->reg.x[7] == 1U && core->reg.pc == 12U && clock == 11U &&
+		core->internal_cycle == 11U && core->internal_instret == 11U);
+}
+
+/*
+ * The cycle counter read by the CSR instruction that ends a block counts
+ * the instructions before it in the block (standard build; Erbium reads 0).
+ *   0: addi x1, x1, 1      8: csrrs x4, mcycle, x0
+ *   4: addi x1, x1, 1     12: jal x0, 0
+ */
+static void check_block_counter_read(void)
+{
+	TargetCoreType *core = reset_core();
+	uint64 clock = 0;
+	uint64 executed = 0;
+
+	put_insn(0, INSN_ADDI_X1_1);
+	put_insn(4, INSN_ADDI_X1_1);
+	put_insn(8, 0xb0002273U);
+	put_insn(12, 0x0000006fU);
+	riscv_device_accessed = FALSE;
+	(void)cpu_supply_clocks(0, 4, &clock, &executed);	/* decodes the four instructions */
+	core->reg.pc = 0;
+	(void)cpu_supply_clocks(0, 3, &clock, &executed);	/* runs them as one block */
+#if CPU_CONFIG_ERBIUM_COMPAT
+	check("mcycle read at the end of a block is 0 (Erbium)",
+		core->reg.x[4] == 0U && core->internal_cycle == 7U && core->internal_instret == 7U);
+#else
+	check("mcycle read at the end of a block counts the block's earlier instructions",
+		core->reg.x[4] == 6U && core->internal_cycle == 7U && core->internal_instret == 7U);
+#endif
+}
+
 static void check_misaligned_doubleword(void)
 {
 	TargetCoreType *core = reset_core();
@@ -236,6 +289,8 @@ int main(void)
 	check_counters_and_traps(&clock);
 	check_modified_code();
 	check_block_after_store();
+	check_block_through_branch();
+	check_block_counter_read();
 	check_misaligned_doubleword();
 	check_counter_csr();
 	check_fence_i();
