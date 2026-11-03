@@ -6,6 +6,7 @@
 #include "erbium_devices.h"
 #include "concrete_executor/target/dbg_target_serial.h"
 #include "mmio_register.h"
+#include "cpuemu_ops.h"
 #include <stdio.h>
 #include <string.h>
 #define UART_BASE 0x02004000ULL
@@ -131,9 +132,24 @@ Std_ReturnType erbium_uart_receive(uint8 data)
 	update_irq();
 	return STD_E_OK;
 }
+/*
+ * A register access can happen between device ticks (batched execution):
+ * bring the UART's view of the virtual clock up to date first.
+ */
+static void catch_up_clock(void)
+{
+	uint64 now = cpuemu_get_clock();
+
+	if (now > uart_now) {
+		uart_now = now;
+	}
+}
+
 static uint32 read_reg(AthrillAddrType a)
 {
 	uint32 v;
+
+	catch_up_clock();
 	switch ((unsigned)(a - UART_BASE)) {
 	case 0:
 		return baud;
@@ -158,6 +174,7 @@ static uint32 read_reg(AthrillAddrType a)
 }
 static void write_reg(AthrillAddrType a, uint32 v)
 {
+	catch_up_clock();
 	switch ((unsigned)(a - UART_BASE)) {
 	case 0:
 		baud = v;

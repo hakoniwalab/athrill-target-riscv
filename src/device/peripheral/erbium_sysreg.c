@@ -17,6 +17,7 @@ static Std_ReturnType get8(
     AthrillAddrType address,
     uint8 *data)
 {
+	riscv_device_accessed = TRUE;
 	(void)region;
 	(void)core_id;
 	*data = erbium_sysreg_data[address - SYSREG_BASE];
@@ -29,6 +30,7 @@ static Std_ReturnType get16(
     AthrillAddrType address,
     uint16 *data)
 {
+	riscv_device_accessed = TRUE;
 	uint8 low;
 	uint8 high;
 
@@ -44,6 +46,7 @@ static Std_ReturnType get32(
     AthrillAddrType address,
     uint32 *data)
 {
+	riscv_device_accessed = TRUE;
 	uint16 low;
 	uint16 high;
 
@@ -59,6 +62,7 @@ static Std_ReturnType put8(
     AthrillAddrType address,
     uint8 data)
 {
+	riscv_device_accessed = TRUE;
 	(void)region;
 	(void)core_id;
 	erbium_sysreg_data[address - SYSREG_BASE] = data;
@@ -71,6 +75,7 @@ static Std_ReturnType put16(
     AthrillAddrType address,
     uint16 data)
 {
+	riscv_device_accessed = TRUE;
 	(void)put8(region, core_id, address, (uint8)data);
 	(void)put8(region, core_id, address + 1U, (uint8)(data >> 8U));
 	return STD_E_OK;
@@ -82,6 +87,7 @@ static Std_ReturnType put32(
     AthrillAddrType address,
     uint32 data)
 {
+	riscv_device_accessed = TRUE;
 	(void)put16(region, core_id, address, (uint16)data);
 	(void)put16(region, core_id, address + 2U, (uint16)(data >> 16U));
 	return STD_E_OK;

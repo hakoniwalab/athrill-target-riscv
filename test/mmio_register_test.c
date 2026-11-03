@@ -7,6 +7,7 @@
 #include "mmio_register.h"
 #include <stdio.h>
 
+std_bool riscv_device_accessed;
 static unsigned failures;
 static unsigned reads[2];
 static unsigned writes[2];
@@ -89,6 +90,7 @@ int main(void)
 	check("halfword write across a word", written[0] == 0xfe000000U && written[1] == 0x000000caU
 		&& writes[0] == 1U && writes[1] == 1U);
 	check("writes never read", reads[0] == 0U && reads[1] == 0U);
+	check("accesses mark the device as accessed", riscv_device_accessed == TRUE);
 
 	printf("%s\n", failures == 0U ? "SELFTEST PASS" : "SELFTEST FAIL");
 	return failures == 0U ? 0 : 1;

@@ -11,6 +11,9 @@ include("${ATHRILL_SOURCE_DIR}/cmake/AthrillCore.cmake")
 set(ATHRILL_TARGET_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 option(ATHRILL_ENABLE_EXDEV "Enable external device loading" ON)
 option(RISCV_ERBIUM_COMPAT "Model AIFoundry Erbium behaviour (OFF: standard RV64)" ON)
+# Batched execution in the core's background loop: up to this many clocks
+# without a device tick while no device event is due (see cpuemu.cpp).
+add_compile_definitions(ATHRILL_TARGET_BATCH_CLOCKS=1024U)
 if(RISCV_ERBIUM_COMPAT)
   add_compile_definitions(CPU_CONFIG_ERBIUM_COMPAT=1)
 else()
@@ -136,7 +139,7 @@ if(BUILD_TESTING)
   riscv_target(athrill-uart-tx-test)
   add_test(NAME athrill-uart-tx COMMAND athrill-uart-tx-test)
   # Decoder dump for test/crosscheck_decoder.py (needs Docker; not a CTest).
-  add_executable(athrill-decoder-dump test/decoder_dump.c)
+  add_executable(athrill-decoder-dump test/decoder_dump.c test/common/host_cpuemu_stub.c)
   riscv_target(athrill-decoder-dump)
   target_link_libraries(athrill-decoder-dump PRIVATE athrill_riscv_cpu
     athrill_riscv_device athrill_bus athrill_mpu athrill_std
@@ -144,7 +147,7 @@ if(BUILD_TESTING)
   add_executable(athrill-decode-benchmark test/decode_benchmark.c
     ${RISCV_CPU_SOURCES})
   riscv_target(athrill-decode-benchmark)
-  add_executable(athrill-decode-test test/decode_test.c)
+  add_executable(athrill-decode-test test/decode_test.c test/common/host_cpuemu_stub.c)
   riscv_target(athrill-decode-test)
   # The memory map in athrill_riscv_config refers to the device registers,
   # so the device library follows it again for single-pass linkers (GNU ld).

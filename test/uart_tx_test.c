@@ -45,6 +45,13 @@ void intc_plic_set_source(uint32 source, std_bool level)
 }
 
 static DeviceClockType device_clock;
+std_bool riscv_device_accessed;
+
+/* The UART reads the virtual clock on register access. */
+uint64 cpuemu_get_clock(void)
+{
+	return device_clock.clock;
+}
 
 static void run_to(uint64 clock)
 {

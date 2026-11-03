@@ -17,6 +17,9 @@
  * An access that crosses a word boundary (possible with misaligned
  * accesses) covers two registers.
  */
+/* Set by every device register access (see cpu_batch_can_continue()). */
+extern std_bool riscv_device_accessed;
+
 typedef uint32 (*MmioReadRegister)(AthrillAddrType word_address);
 typedef void (*MmioWriteRegister)(AthrillAddrType word_address, uint32 value);
 
@@ -28,6 +31,7 @@ static inline uint32 mmio_read(MmioReadRegister read, AthrillAddrType address, u
 	uint32 first_word_bytes = 4U - (uint32)(address & 3U);
 	uint64 mask = (size >= 4U) ? 0xffffffffULL : ((1ULL << (size * 8U)) - 1U);
 
+	riscv_device_accessed = TRUE;
 	if (size > first_word_bytes) {
 		bytes |= (uint64)read(word + 4U) << (first_word_bytes * 8U);
 	}
@@ -42,6 +46,7 @@ static inline void mmio_write(MmioWriteRegister write, AthrillAddrType address, 
 	uint64 mask = (size >= 4U) ? 0xffffffffULL : ((1ULL << (size * 8U)) - 1U);
 	uint64 value = ((uint64)data & mask) << shift;
 
+	riscv_device_accessed = TRUE;
 	write(word, (uint32)value);
 	if (size > first_word_bytes) {
 		write(word + 4U, (uint32)(value >> 32U));

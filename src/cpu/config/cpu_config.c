@@ -6,6 +6,7 @@
 #include "riscv_decode.h"
 #include "pmp.h"
 #include "intc.h"
+#include "erbium_devices.h"
 #include <string.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -131,6 +132,23 @@ static void decode_cache_remember_permission(const TargetCoreType *core, RiscvDe
 {
 	decoded->pmp_epoch = core->pmp_epoch;
 	decoded->privilege = core->reg.privilege;
+}
+
+/*
+ * Batched execution (ATHRILL_TARGET_BATCH_CLOCKS): the next instruction may
+ * run without a device tick unless the CPU halted or the last instruction
+ * touched a device register (which may have moved a device event).
+ */
+std_bool cpu_batch_can_continue(CoreIdType core_id)
+{
+	if (virtual_cpu.cores[core_id].core.is_halt) {
+		return FALSE;
+	}
+	if (riscv_device_accessed) {
+		riscv_device_accessed = FALSE;
+		return FALSE;
+	}
+	return TRUE;
 }
 
 Std_ReturnType cpu_supply_clock(CoreIdType id)

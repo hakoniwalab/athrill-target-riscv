@@ -10,6 +10,8 @@
 
 extern uint32 riscv_trace_enabled;
 
+std_bool riscv_device_accessed = FALSE;
+
 void erbium_devices_reset(void)
 {
 	erbium_sysreg_reset();

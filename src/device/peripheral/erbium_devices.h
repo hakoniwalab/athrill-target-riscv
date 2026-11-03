@@ -12,6 +12,8 @@ extern MpuAddressRegionOperationType erbium_timer_ops;
 extern uint8 erbium_sysreg_data[0x1000];
 extern uint8 erbium_uart_data[0x100];
 extern uint8 erbium_timer_data[0x10];
+/* Set by every device register access; read by cpu_batch_can_continue(). */
+extern std_bool riscv_device_accessed;
 void erbium_devices_reset(void);
 void erbium_devices_supply_clock(DeviceClockType *clock);
 void erbium_sysreg_reset(void);

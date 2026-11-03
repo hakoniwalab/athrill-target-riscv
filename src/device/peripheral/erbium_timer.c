@@ -5,6 +5,7 @@
  */
 #include "erbium_devices.h"
 #include "cpu.h"
+#include "cpuemu_ops.h"
 #include <string.h>
 #define TIMER_BASE 0x80f40200ULL
 #define ERBIUM_TIMER_DEFAULT_FREQUENCY 2000000U
@@ -27,6 +28,31 @@ void erbium_timer_configure(uint32 cpu_mhz, uint32 timer_hz)
 	timer_frequency = timer_hz ? timer_hz : ERBIUM_TIMER_DEFAULT_FREQUENCY;
 	remainder = 0;
 }
+/* Advance mtime to the given virtual clock. */
+static void advance_to(uint64 clock)
+{
+	uint64 hz = cpu_hz();
+	uint64 scaled;
+
+	if (clock <= last_clock) {
+		return;
+	}
+	scaled = (clock - last_clock) * (uint64)timer_frequency + remainder;
+	last_clock = clock;
+	mtime += scaled / hz;
+	remainder = scaled % hz;
+}
+
+/*
+ * A register access can happen between device ticks (batched execution):
+ * bring mtime up to the current clock first.
+ */
+static void catch_up_clock(void)
+{
+	riscv_device_accessed = TRUE;
+	advance_to(cpuemu_get_clock());
+}
+
 static uint32 word(AthrillAddrType a)
 {
 	uint64 v = (a - TIMER_BASE) < 8 ? mtime : mtimecmp;
@@ -34,6 +60,7 @@ static uint32 word(AthrillAddrType a)
 }
 static Std_ReturnType g8(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint8*d)
 {
+	catch_up_clock();
 	uint32 v = word(a & ~3ULL);
 	(void)r;
 	(void)c;
@@ -42,6 +69,7 @@ static Std_ReturnType g8(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a
 }
 static Std_ReturnType g16(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint16*d)
 {
+	catch_up_clock();
 	uint8 x, y;
 	g8(r, c, a, &x);
 	g8(r, c, a + 1, &y);
@@ -50,6 +78,7 @@ static Std_ReturnType g16(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType 
 }
 static Std_ReturnType g32(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint32*d)
 {
+	catch_up_clock();
 	(void)r;
 	(void)c;
 	*d = word(a);
@@ -63,6 +92,7 @@ static void putword(AthrillAddrType a, uint32 d)
 }
 static Std_ReturnType p8(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint8 d)
 {
+	catch_up_clock();
 	uint32 v = word(a & ~3ULL), s = (a & 3U) * 8U;
 	(void)r;
 	(void)c;
@@ -71,12 +101,14 @@ static Std_ReturnType p8(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a
 }
 static Std_ReturnType p16(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint16 d)
 {
+	catch_up_clock();
 	p8(r, c, a, (uint8)d);
 	p8(r, c, a + 1, (uint8)(d >> 8));
 	return STD_E_OK;
 }
 static Std_ReturnType p32(MpuAddressRegionType*r, CoreIdType c, AthrillAddrType a, uint32 d)
 {
+	catch_up_clock();
 	(void)r;
 	(void)c;
 	putword(a, d);
@@ -93,13 +125,9 @@ void erbium_timer_reset(void)
 }
 void erbium_timer_tick(DeviceClockType*c)
 {
-	uint64 clocks = c->clock - last_clock, hz = cpu_hz(), scaled, until, ticks;
-	last_clock = c->clock;
-	if (clocks != 0U) {
-		scaled = clocks * (uint64)timer_frequency + remainder;
-		mtime += scaled / hz;
-		remainder = scaled % hz;
-	}
+	uint64 hz = cpu_hz(), until, ticks;
+
+	advance_to(c->clock);
 	intc_set_local_interrupt(0U, 7U, mtime >= mtimecmp);
 	if (mtimecmp > mtime) {
 		ticks = mtimecmp - mtime;
