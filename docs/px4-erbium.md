@@ -155,13 +155,16 @@ ls -l PX4/build/aifoundry_erbium_mavlink/aifoundry_erbium_mavlink.elf
 ```
 
 `DEVICE_CONFIG_ERBIUM_UART_TCP_PORT` makes Athrill connect the UART to a TCP
-client on `127.0.0.1` (local host only). `-t -1` runs without a clock limit;
-stop Athrill with Ctrl-C.
+client on `127.0.0.1` (local host only). Athrill runs PX4 faster than real
+time; `DEBUG_FUNC_REAL_TIME 1` keeps it at real time, so that the vehicle
+in QGroundControl moves at its real speed. `-t -1` runs without a clock
+limit; stop Athrill with Ctrl-C.
 
 ```bash
 cd "$HOME/athrill-px4"
 cp athrill-target-riscv/test/erbium/device_config.txt px4-qgc-device-config.txt
 echo "DEVICE_CONFIG_ERBIUM_UART_TCP_PORT 5760" >> px4-qgc-device-config.txt
+echo "DEBUG_FUNC_REAL_TIME 1" >> px4-qgc-device-config.txt
 athrill-build/athrill3 -c1 \
   -m athrill-target-riscv/test/erbium/memory.txt \
   -d px4-qgc-device-config.txt \
@@ -195,7 +198,7 @@ mode with the SIH GPS position.
 
 | Component | Version |
 |---|---|
-| Athrill core (`toppers/athrill`, branch `cpp`) | `a2586b7c` |
+| Athrill core (`toppers/athrill`, branch `cpp`) | `e62695cc` |
 | Athrill RISC-V target | see this repository's log |
 | PX4 | `216039a12bab5a86769128f7be3e5f63dc7b4952` |
 | PX4's NuttX | `172b8fd7dbcfa0ea29e3be5b09fe8a392ab843a6` |
