@@ -1,4 +1,5 @@
 #include "op_exec.h"
+#include "op_exec_memory.h"
 
 #include "bus.h"
 #include "cpu_config.h"
@@ -14,11 +15,19 @@ static int store_value(
 	uint64 value = core->reg.x[decoded->rs2];
 	Std_ReturnType error = STD_E_OK;
 	uint32 index;
+	uint8 *pointer;
 
 	if (!riscv_pmp_check(core, address, width, CpuMemoryAccess_WRITE)) {
 		return op_exec_memory_fault(core, address, 7U);
 	}
-	if (((address & (width - 1U)) != 0U) && CPU_CONFIG_ERBIUM_COMPAT) {
+	if (((address & (width - 1U)) != 0U) && !CPU_CONFIG_ERBIUM_COMPAT) {
+		return op_exec_memory_fault(core, address, 6U);
+	}
+	pointer = op_exec_memory_pointer(core, address, width, TRUE);
+	if (pointer != NULL) {
+		op_exec_memory_write(pointer, width, value);
+	}
+	else if (((address & (width - 1U)) != 0U) && CPU_CONFIG_ERBIUM_COMPAT) {
 		/* Erbium accepts unaligned accesses one byte at a time. */
 		for (index = 0U; (index < width) && (error == STD_E_OK); index++) {
 			error = bus_put_data8(

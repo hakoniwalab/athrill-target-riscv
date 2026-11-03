@@ -93,4 +93,17 @@ Std_ReturnType mpu_put_data32(CoreIdType id, AthrillAddrType address, uint32 dat
 	return write_bytes(id, address, 4U, data);
 }
 
+/* No direct memory window: accesses go through the stub functions above. */
+Std_ReturnType mpu_get_memory_window(CoreIdType id, AthrillAddrType address,
+	AthrillAddrType *start, AthrillAddrType *size, uint8 **data, std_bool *writable)
+{
+	(void)id;
+	(void)address;
+	(void)start;
+	(void)size;
+	(void)data;
+	(void)writable;
+	return STD_E_NOENT;
+}
+
 #endif /* HOST_MEMORY_STUB_H */

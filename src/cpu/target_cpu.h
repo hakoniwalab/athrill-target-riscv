@@ -62,6 +62,15 @@ typedef struct {
     uint64 hi[16];
 } RiscvPmpTable;
 
+/* The ROM/RAM region a core accessed last, for direct loads and stores. */
+typedef struct {
+    std_bool valid;
+    std_bool writable;
+    uint64 start;
+    uint64 end;
+    uint8 *data;
+} RiscvMemoryWindow;
+
 typedef struct TargetCoreTypeTag {
     uint32 real_elaps;
     CoreIdType core_id;
@@ -72,6 +81,7 @@ typedef struct TargetCoreTypeTag {
     std_bool access_fault;
     uint64 internal_cycle, internal_instret, pmp_epoch;
     RiscvPmpTable pmp_table;
+    RiscvMemoryWindow memory_window;
     uint64 trace_store_address, trace_store_value;
     uint8 trace_store_size, trace_store_valid;
 #define RISCV_DECODE_CACHE_ENTRIES 16384U

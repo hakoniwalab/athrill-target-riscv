@@ -1,6 +1,7 @@
 #pragma STDC FENV_ACCESS ON
 
 #include "op_exec_fpu_internal.h"
+#include "op_exec_memory.h"
 
 #include <fenv.h>
 #include <math.h>
@@ -104,12 +105,19 @@ int op_exec_flw(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 {
 	uint64 address = core->reg.x[decoded->rs1] + decoded->immediate;
 	uint32 value;
+	uint8 *pointer;
 
 	if (!fp_enabled(core)) {
 		return fp_illegal(core, decoded);
 	}
-	if (!riscv_pmp_check(core, address, 4U, CpuMemoryAccess_READ) ||
-		bus_get_data32(core->core_id, address, &value) != STD_E_OK) {
+	if (!riscv_pmp_check(core, address, 4U, CpuMemoryAccess_READ)) {
+		return op_exec_memory_fault(core, address, 5U);
+	}
+	pointer = op_exec_memory_pointer(core, address, 4U, FALSE);
+	if (pointer != NULL) {
+		value = (uint32)op_exec_memory_read(pointer, 4U);
+	}
+	else if (bus_get_data32(core->core_id, address, &value) != STD_E_OK) {
 		return op_exec_memory_fault(core, address, 5U);
 	}
 	fp_write(core, decoded->rd, value);
@@ -120,13 +128,20 @@ int op_exec_fsw(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 {
 	uint64 address = core->reg.x[decoded->rs1] + decoded->immediate;
 	uint32 value;
+	uint8 *pointer;
 
 	if (!fp_enabled(core)) {
 		return fp_illegal(core, decoded);
 	}
 	value = (uint32)core->reg.f[decoded->rs2];
-	if (!riscv_pmp_check(core, address, 4U, CpuMemoryAccess_WRITE) ||
-		bus_put_data32(core->core_id, address, value) != STD_E_OK) {
+	if (!riscv_pmp_check(core, address, 4U, CpuMemoryAccess_WRITE)) {
+		return op_exec_memory_fault(core, address, 7U);
+	}
+	pointer = op_exec_memory_pointer(core, address, 4U, TRUE);
+	if (pointer != NULL) {
+		op_exec_memory_write(pointer, 4U, value);
+	}
+	else if (bus_put_data32(core->core_id, address, value) != STD_E_OK) {
 		return op_exec_memory_fault(core, address, 7U);
 	}
 	riscv_trace_store(core, address, 4U, value);

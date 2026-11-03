@@ -1,4 +1,5 @@
 #include "op_exec.h"
+#include "op_exec_memory.h"
 
 #include "bus.h"
 #include "cpu_config.h"
@@ -24,11 +25,19 @@ static int load_value(
 	uint32 index;
 	uint16 half;
 	uint8 byte;
+	uint8 *pointer;
 
 	if (!riscv_pmp_check(core, address, width, CpuMemoryAccess_READ)) {
 		return op_exec_memory_fault(core, address, 5U);
 	}
-	if (((address & (width - 1U)) != 0U) && CPU_CONFIG_ERBIUM_COMPAT) {
+	if (((address & (width - 1U)) != 0U) && !CPU_CONFIG_ERBIUM_COMPAT) {
+		return op_exec_memory_fault(core, address, 4U);
+	}
+	pointer = op_exec_memory_pointer(core, address, width, FALSE);
+	if (pointer != NULL) {
+		value = op_exec_memory_read(pointer, width);
+	}
+	else if (((address & (width - 1U)) != 0U) && CPU_CONFIG_ERBIUM_COMPAT) {
 		/* Erbium accepts unaligned accesses one byte at a time. */
 		for (index = 0U; index < width; index++) {
 			if (bus_get_data8(core->core_id, address + index, &byte) !=
