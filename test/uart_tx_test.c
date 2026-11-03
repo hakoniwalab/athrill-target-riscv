@@ -195,8 +195,11 @@ static void check_rx_file(void)
 
 	fputs("AB", file);
 	fflush(file);
-	start();
+	/* Same order as Athrill's start-up: reset, open the file, tick at 0. */
+	erbium_uart_reset();
 	erbium_uart_open_rx_file(path);
+	run_to(0U);
+	check("RX file: nothing at clock 0 (receiving takes one period)", rx_ready() == 0U);
 	run_to(1U);
 	check("RX file: first character not before the edge at 30", rx_ready() == 0U);
 	check("RX file: skip limited to the edge at 30", device_clock.min_intr_interval == 29U);

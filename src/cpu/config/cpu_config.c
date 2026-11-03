@@ -1,4 +1,5 @@
 #include "cpu.h"
+#include "cpuemu_ops.h"
 #include "bus.h"
 #include "std_cpu_ops.h"
 #include "mpu_types.h"
@@ -192,8 +193,10 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 	}
 clock_done:
 	if (riscv_trace_enabled && !core->is_halt) {
-		printf("I hart=%u seq=%" PRIu64 " prv=%u pc=%016" PRIx64 " insn=%08x\n", (unsigned)id,
-		       riscv_trace_sequence++, (unsigned)core->reg.privilege, trace_pc, insn);
+		/* clk is the virtual clock, so interrupt and task-switch times can be compared. */
+		printf("I hart=%u seq=%" PRIu64 " clk=%" PRIu64 " prv=%u pc=%016" PRIx64 " insn=%08x\n",
+		       (unsigned)id, riscv_trace_sequence++, cpuemu_get_clock(),
+		       (unsigned)core->reg.privilege, trace_pc, insn);
 		for (trace_index = 1U; trace_index < 32U; trace_index++) {
 			if (core->reg.x[trace_index] != trace_registers.x[trace_index]) printf("X hart=%u reg=%u value=%016"
 				    PRIx64 "\n", (unsigned)id, trace_index, core->reg.x[trace_index]);

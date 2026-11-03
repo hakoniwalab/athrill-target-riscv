@@ -34,6 +34,9 @@
  * without the debugger: from the start of the file, one character per
  * UART_CHARACTER_CLOCKS at multiples of that period while the RX FIFO has
  * room, so the same file arrives at the same virtual times on every run.
+ * Receiving a character takes one period, so the first one arrives at the
+ * first period edge after the file is opened (clock 30 when it is opened
+ * at reset).
  * At the end of the file, appended data is looked for every
  * UART_RX_FILE_POLL_CLOCKS (about one million clocks, a whole number of
  * UART periods so that the poll falls on a period edge).
@@ -244,7 +247,7 @@ void erbium_uart_open_rx_file(const char *path)
 		fclose(rx_file);
 		rx_file = NULL;
 	}
-	rx_file_next_clock = 0;
+	rx_file_next_clock = ((uart_now / UART_CHARACTER_CLOCKS) + 1U) * UART_CHARACTER_CLOCKS;
 	rx_file_at_end = FALSE;
 	if (path == NULL) {
 		return;
