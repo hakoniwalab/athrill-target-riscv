@@ -14,6 +14,8 @@
  */
 #include "peripheral/erbium_devices.h"
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #define UART_BASE 0x02004000ULL
 #define UART_TX (UART_BASE + 0x08U)
@@ -171,6 +173,67 @@ static void check_halfword_receive(void)
 	check("next halfword read takes the next one", value == 'B');
 }
 
+static uint8 read_rx(void)
+{
+	uint32 value;
+
+	erbium_uart_ops.get_data32(NULL, 0, UART_BASE + 0x10U, &value);
+	return (uint8)value;
+}
+
+static uint32 rx_ready(void)
+{
+	return status() & 0x4U;
+}
+
+static void check_rx_file(void)
+{
+	char path[] = "/tmp/athrill-uart-rx-XXXXXX";
+	int fd = mkstemp(path);
+	FILE *file = fdopen(fd, "wb");
+	unsigned i;
+
+	fputs("AB", file);
+	fflush(file);
+	start();
+	erbium_uart_open_rx_file(path);
+	run_to(1U);
+	check("RX file: first character not before the edge at 30", rx_ready() == 0U);
+	check("RX file: skip limited to the edge at 30", device_clock.min_intr_interval == 29U);
+	run_to(30U);
+	check("RX file: 'A' at 30", rx_ready() != 0U && read_rx() == 'A');
+	run_to(59U);
+	check("RX file: nothing more at 59", rx_ready() == 0U);
+	run_to(60U);
+	check("RX file: 'B' at 60", read_rx() == 'B');
+	run_to(90U);
+	run_to(91U);
+	check("RX file: end of file, skip limited to the next poll",
+		rx_ready() == 0U && device_clock.min_intr_interval == 1000020U - 1U);
+	fputs("C", file);
+	fflush(file);
+	run_to(1000109U);
+	check("RX file: appended data not before the poll", rx_ready() == 0U);
+	run_to(1000110U);
+	check("RX file: appended 'C' at the poll", read_rx() == 'C');
+
+	/* A full RX FIFO stops the input until the guest reads. */
+	for (i = 0U; i < 20U; i++) {
+		fputc('a' + (int)i, file);
+	}
+	fflush(file);
+	for (i = 1U; i <= 25U; i++) {
+		run_to(1000110U + i * 30U);
+	}
+	check("RX file: FIFO filled with 16 characters, the rest waits",
+		read_rx() == 'a' && device_clock.min_intr_interval == DEVICE_CLOCK_MAX_INTERVAL);
+	run_to(1000110U + 26U * 30U);
+	check("RX file: input resumes after a read", rx_ready() != 0U);
+	erbium_uart_open_rx_file(NULL);
+	fclose(file);
+	unlink(path);
+}
+
 int main(void)
 {
 	check_one_character();
@@ -179,6 +242,7 @@ int main(void)
 	check_clock_skip();
 	check_tx_empty_interrupt();
 	check_halfword_receive();
+	check_rx_file();
 	printf("%s\n", failures == 0U ? "SELFTEST PASS" : "SELFTEST FAIL");
 	return failures == 0U ? 0 : 1;
 }

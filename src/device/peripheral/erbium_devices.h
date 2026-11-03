@@ -20,5 +20,6 @@ void erbium_uart_tick(DeviceClockType *clock);
 void erbium_timer_reset(void);
 void erbium_timer_tick(DeviceClockType *clock);
 Std_ReturnType erbium_uart_receive(uint8 data);
+void erbium_uart_open_rx_file(const char *path);
 void erbium_timer_configure(uint32 cpu_frequency, uint32 timer_frequency);
 #endif

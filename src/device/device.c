@@ -21,6 +21,7 @@ void device_init(CpuType *cpu, DeviceClockType *clock)
 {
 	uint32 cpu_frequency = DEFAULT_CPU_FREQUENCY_MHZ;
 	uint32 timer_frequency = DEFAULT_TIMER_FREQUENCY_HZ;
+	char *rx_file;
 
 	(void)cpu;
 	(void)cpuemu_get_devcfg_value("DEVICE_CPU_FREQ", &cpu_frequency);
@@ -35,6 +36,12 @@ void device_init(CpuType *cpu, DeviceClockType *clock)
 	clock->can_skip_clock = TRUE;
 	clock->is_halt = FALSE;
 	erbium_devices_reset();
+	if (cpuemu_get_devcfg_string("DEVICE_CONFIG_ERBIUM_UART_RX_FILE", &rx_file) == STD_E_OK) {
+		erbium_uart_open_rx_file(rx_file);
+	}
+	else {
+		erbium_uart_open_rx_file(NULL);
+	}
 }
 
 void device_reset(CpuType *cpu, DeviceClockType *clock)

@@ -34,6 +34,13 @@ Std_ReturnType cpuemu_get_devcfg_value(const char *key, uint32 *value)
 	return STD_E_INVALID;
 }
 
+Std_ReturnType cpuemu_get_devcfg_string(const char *key, char **value)
+{
+	(void)key;
+	(void)value;
+	return STD_E_INVALID;
+}
+
 extern void device_init(CpuType *, DeviceClockType *);
 extern void device_supply_clock(DeviceClockType *);
 

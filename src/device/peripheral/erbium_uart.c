@@ -6,6 +6,7 @@
 #include "erbium_devices.h"
 #include "concrete_executor/target/dbg_target_serial.h"
 #include "mmio_register.h"
+#include <stdio.h>
 #include <string.h>
 #define UART_BASE 0x02004000ULL
 #define UART_FIFO_SIZE 16U
@@ -28,7 +29,21 @@
  */
 #define UART_CHARACTER_CLOCKS 30U
 
+/*
+ * Receive input from a file (DEVICE_CONFIG_ERBIUM_UART_RX_FILE), for runs
+ * without the debugger: from the start of the file, one character per
+ * UART_CHARACTER_CLOCKS at multiples of that period while the RX FIFO has
+ * room, so the same file arrives at the same virtual times on every run.
+ * At the end of the file, appended data is looked for every
+ * UART_RX_FILE_POLL_CLOCKS (about one million clocks, a whole number of
+ * UART periods so that the poll falls on a period edge).
+ */
+#define UART_RX_FILE_POLL_CLOCKS (UART_CHARACTER_CLOCKS * 33334U)
+
 uint8 erbium_uart_data[0x100];
+static FILE *rx_file;
+static uint64 rx_file_next_clock;
+static std_bool rx_file_at_end;
 static uint32 baud, control, ie, rx_threshold;
 static uint8 rx_fifo[UART_FIFO_SIZE];
 static unsigned rx_head, rx_count;
@@ -223,11 +238,59 @@ void erbium_uart_reset(void)
 	intc_plic_set_source(UART_PLIC_SOURCE, FALSE);
 }
 
+void erbium_uart_open_rx_file(const char *path)
+{
+	if (rx_file != NULL) {
+		fclose(rx_file);
+		rx_file = NULL;
+	}
+	rx_file_next_clock = 0;
+	rx_file_at_end = FALSE;
+	if (path == NULL) {
+		return;
+	}
+	rx_file = fopen(path, "rb");
+	if (rx_file == NULL) {
+		printf("WARNING: can not open UART input file %s\n", path);
+	}
+}
+
+static void receive_from_file(DeviceClockType *clock)
+{
+	int c;
+	uint64 next_edge;
+
+	if (uart_now >= rx_file_next_clock && rx_count < UART_FIFO_SIZE
+		&& (uart_now % UART_CHARACTER_CLOCKS) == 0U) {
+		c = fgetc(rx_file);
+		if (c == EOF) {
+			clearerr(rx_file);
+			rx_file_at_end = TRUE;
+			rx_file_next_clock = uart_now + UART_RX_FILE_POLL_CLOCKS;
+		}
+		else {
+			rx_file_at_end = FALSE;
+			(void)erbium_uart_receive((uint8)c);
+		}
+	}
+	/* A clock skip may not jump over the next character or poll. */
+	if (rx_count < UART_FIFO_SIZE) {
+		next_edge = rx_file_at_end ? rx_file_next_clock
+			: ((uart_now / UART_CHARACTER_CLOCKS) + 1U) * UART_CHARACTER_CLOCKS;
+		if (next_edge - uart_now < clock->min_intr_interval) {
+			clock->min_intr_interval = next_edge - uart_now;
+		}
+	}
+}
+
 void erbium_uart_tick(DeviceClockType *clock)
 {
 	uint64 until;
 
 	uart_now = clock->clock;
+	if (rx_file != NULL) {
+		receive_from_file(clock);
+	}
 	if (ie == 0U) {
 		return;
 	}

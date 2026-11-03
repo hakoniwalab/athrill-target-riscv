@@ -125,6 +125,10 @@ if(BUILD_TESTING)
     src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
+  add_executable(athrill-symbol-lookup-test "${ATHRILL_SOURCE_DIR}/test/symbol_lookup_test.c"
+    "${ATHRILL_SRC_DIR}/lib/symbol_ops.c")
+  riscv_target(athrill-symbol-lookup-test)
+  add_test(NAME athrill-symbol-lookup COMMAND athrill-symbol-lookup-test)
   add_executable(athrill-mmio-register-test test/mmio_register_test.c)
   riscv_target(athrill-mmio-register-test)
   add_test(NAME athrill-mmio-register COMMAND athrill-mmio-register-test)
@@ -208,6 +212,15 @@ if(BUILD_TESTING)
       --memory "${_erbium}/memory.txt" --device-config "${_erbium}/device_config.txt"
       --elf "${NUTTX_ELF}" --command "serial 0 help\\n" --command cont
       --expect "Builtin Apps:" --timeout 60)
+    # The same without the debugger (-t): the UART input comes from a file.
+    file(READ "${_erbium}/device_config.txt" _erbium_device_config)
+    file(WRITE "${CMAKE_BINARY_DIR}/nuttx-file-input-device-config.txt"
+      "${_erbium_device_config}DEVICE_CONFIG_ERBIUM_UART_RX_FILE ${_erbium}/nsh_help_input.txt\n")
+    add_test(NAME firmware-nuttx-nsh-file-input COMMAND Python3::Interpreter "${_runner}"
+      --athrill $<TARGET_FILE:athrill3>
+      --memory "${_erbium}/memory.txt"
+      --device-config "${CMAKE_BINARY_DIR}/nuttx-file-input-device-config.txt"
+      --elf "${NUTTX_ELF}" --clocks 10000000000 --expect "Builtin Apps:" --timeout 60)
   endif()
 endif()
 

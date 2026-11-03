@@ -45,3 +45,17 @@ timer 2
 timer 3
 PASS
 ```
+
+## Input without the debugger
+
+For runs with `-t` (no debugger), add to the device config
+
+```text
+DEVICE_CONFIG_ERBIUM_UART_RX_FILE /path/to/input.txt
+```
+
+The UART receives the file from its start, one character per 30 clocks of the
+virtual clock while the RX FIFO has room, so the same file arrives at the same
+virtual times on every run. Data appended later is picked up within about a
+million clocks. The `firmware-nuttx-nsh-file-input` CTest runs NuttX this way
+with `nsh_help_input.txt`.
