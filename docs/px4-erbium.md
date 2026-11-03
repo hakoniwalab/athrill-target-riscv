@@ -181,7 +181,7 @@ mode with the SIH GPS position.
   `CONFIG_ERBIUM_MTIMER_FREQ`. PX4's uptime then equals Athrill's simulated
   time.
 - Speed (Apple M-series, macOS): 15 s of PX4 time take about 7.3 s, i.e.
-  about 1.8 times real time. Runs without the debugger are deterministic for the
+  about 2 times real time. Runs without the debugger are deterministic for the
   same ELF, configuration and input file.
 - Erbium specifics that Athrill models: misaligned loads and stores are
   allowed; `fdiv.s`, `fsqrt.s` and the 64-bit float conversions raise
