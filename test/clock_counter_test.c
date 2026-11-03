@@ -177,6 +177,7 @@ static void check_wfi_and_timer(DeviceClockType *clock)
 	clock->clock = 100;
 	device_supply_clock(clock);
 	erbium_timer_ops.get_data32(NULL, 0, 0x80f40200ULL, &value);
+	/* 100 clocks at 200 MHz are 0.5 us; mtime runs at 2 MHz: 1 tick. */
 	check("mtime after 100 clocks at the default frequencies", value == 1U);
 }
 

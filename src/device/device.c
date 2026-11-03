@@ -4,7 +4,8 @@
 #include "peripheral/erbium_devices.h"
 #include "std_device_ops.h"
 
-#define DEFAULT_CPU_FREQUENCY_MHZ 100U
+/* Erbium: 200 MHz system clock, 2 MHz mtime (100 clocks per mtime tick). */
+#define DEFAULT_CPU_FREQUENCY_MHZ 200U
 #define DEFAULT_TIMER_FREQUENCY_HZ 2000000U
 
 extern uint32 riscv_trace_enabled;

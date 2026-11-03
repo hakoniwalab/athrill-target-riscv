@@ -8,7 +8,7 @@
 #include <string.h>
 #define TIMER_BASE 0x80f40200ULL
 #define ERBIUM_TIMER_DEFAULT_FREQUENCY 2000000U
-#define ATHRILL_CPU_DEFAULT_FREQUENCY 100U
+#define ATHRILL_CPU_DEFAULT_FREQUENCY 200U
 uint8 erbium_timer_data[0x10];
 static uint64 mtime, mtimecmp, last_clock, remainder;
 static uint32 cpu_frequency = ATHRILL_CPU_DEFAULT_FREQUENCY;
@@ -20,7 +20,11 @@ static uint64 cpu_hz(void)
 void erbium_timer_configure(uint32 cpu_mhz, uint32 timer_hz)
 {
 	cpu_frequency = cpu_mhz ? cpu_mhz : ATHRILL_CPU_DEFAULT_FREQUENCY;
-	timer_frequency = (timer_hz ? timer_hz : ERBIUM_TIMER_DEFAULT_FREQUENCY) / 2U;
+	/*
+	 * timer_hz (DEVICE_CONFIG_ERBIUM_TIMER_FREQ) is the mtime frequency
+	 * itself; NuttX's CONFIG_ERBIUM_MTIMER_FREQ must be the same value.
+	 */
+	timer_frequency = timer_hz ? timer_hz : ERBIUM_TIMER_DEFAULT_FREQUENCY;
 	remainder = 0;
 }
 static uint32 word(AthrillAddrType a)
