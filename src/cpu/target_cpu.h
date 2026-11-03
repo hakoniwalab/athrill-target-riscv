@@ -85,13 +85,20 @@ typedef struct RiscvDecodePage {
     RiscvDecodedInsn entries[RISCV_DECODE_PAGE_ENTRIES];
 } RiscvDecodePage;
 
-/* The ROM/RAM region a core accessed last, for direct loads and stores. */
+/*
+ * The ROM/RAM region a core accessed last, for direct loads and stores, and
+ * whether PMP allows reads and writes of all of it, worked out for one PMP
+ * setting and privilege (pmp_valid is cleared when the window moves).
+ */
 typedef struct {
     std_bool valid;
     std_bool writable;
     uint64 start;
     uint64 end;
     uint8 *data;
+    std_bool pmp_valid, pmp_read, pmp_write;
+    uint64 pmp_epoch;
+    RiscvPrivilege pmp_privilege;
 } RiscvMemoryWindow;
 
 typedef struct TargetCoreTypeTag {

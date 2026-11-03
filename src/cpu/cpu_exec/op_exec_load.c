@@ -12,7 +12,7 @@ int op_exec_memory_fault(TargetCoreType *core, uint64 address, uint64 cause)
 	return RISCV_EXEC_TRAP;
 }
 
-static int load_value(
+static inline int load_value(
 	TargetCoreType *core,
 	const RiscvDecodedInsn *decoded,
 	uint32 width,
@@ -27,13 +27,16 @@ static int load_value(
 	uint8 byte;
 	uint8 *pointer;
 
-	if (!riscv_pmp_check(core, address, width, CpuMemoryAccess_READ)) {
-		return op_exec_memory_fault(core, address, 5U);
+	pointer = op_exec_memory_direct(core, address, width, CpuMemoryAccess_READ);
+	if (pointer == NULL) {
+		if (!riscv_pmp_check(core, address, width, CpuMemoryAccess_READ)) {
+			return op_exec_memory_fault(core, address, 5U);
+		}
+		pointer = op_exec_memory_pointer(core, address, width, FALSE);
 	}
 	if (((address & (width - 1U)) != 0U) && !CPU_CONFIG_ERBIUM_COMPAT) {
 		return op_exec_memory_fault(core, address, 4U);
 	}
-	pointer = op_exec_memory_pointer(core, address, width, FALSE);
 	if (pointer != NULL) {
 		value = op_exec_memory_read(pointer, width);
 	}

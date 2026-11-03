@@ -118,9 +118,28 @@ static inline RiscvDecodedInsn *riscv_decode_lookup(TargetCoreType *core, uint64
 RiscvDecodedInsn *riscv_decode_slot(TargetCoreType *core, uint64 pc);
 /* Frees all pages (core reset). */
 void riscv_decode_cache_clear(TargetCoreType *core);
-void riscv_decode_cache_invalidate(
+void riscv_decode_cache_invalidate_pages(
 	TargetCoreType *core,
 	uint64 address,
 	uint32 size);
+
+/*
+ * Drops the entries a store of size bytes at address overwrites. Most
+ * stores go to data, whose pages hold no decoded code: only the pages of
+ * the first and last byte that an overwritten instruction can occupy are
+ * looked at before the entries are.
+ */
+static inline void riscv_decode_cache_invalidate(
+	TargetCoreType *core,
+	uint64 address,
+	uint32 size)
+{
+	uint64 first = (address >= 3U) ? (address - 3U) : 0U;
+
+	if ((riscv_decode_page(core, first) != NULL) ||
+		(riscv_decode_page(core, address + size - 1U) != NULL)) {
+		riscv_decode_cache_invalidate_pages(core, address, size);
+	}
+}
 
 #endif

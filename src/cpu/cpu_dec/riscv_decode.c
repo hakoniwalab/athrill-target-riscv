@@ -298,7 +298,7 @@ void riscv_decode_cache_clear(TargetCoreType *core)
 	}
 }
 
-void riscv_decode_cache_invalidate(
+void riscv_decode_cache_invalidate_pages(
 	TargetCoreType *core,
 	uint64 address,
 	uint32 size)

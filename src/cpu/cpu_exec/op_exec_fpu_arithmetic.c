@@ -110,10 +110,13 @@ int op_exec_flw(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 	if (!fp_enabled(core)) {
 		return fp_illegal(core, decoded);
 	}
-	if (!riscv_pmp_check(core, address, 4U, CpuMemoryAccess_READ)) {
-		return op_exec_memory_fault(core, address, 5U);
+	pointer = op_exec_memory_direct(core, address, 4U, CpuMemoryAccess_READ);
+	if (pointer == NULL) {
+		if (!riscv_pmp_check(core, address, 4U, CpuMemoryAccess_READ)) {
+			return op_exec_memory_fault(core, address, 5U);
+		}
+		pointer = op_exec_memory_pointer(core, address, 4U, FALSE);
 	}
-	pointer = op_exec_memory_pointer(core, address, 4U, FALSE);
 	if (pointer != NULL) {
 		value = (uint32)op_exec_memory_read(pointer, 4U);
 	}
@@ -134,10 +137,13 @@ int op_exec_fsw(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 		return fp_illegal(core, decoded);
 	}
 	value = (uint32)core->reg.f[decoded->rs2];
-	if (!riscv_pmp_check(core, address, 4U, CpuMemoryAccess_WRITE)) {
-		return op_exec_memory_fault(core, address, 7U);
+	pointer = op_exec_memory_direct(core, address, 4U, CpuMemoryAccess_WRITE);
+	if (pointer == NULL) {
+		if (!riscv_pmp_check(core, address, 4U, CpuMemoryAccess_WRITE)) {
+			return op_exec_memory_fault(core, address, 7U);
+		}
+		pointer = op_exec_memory_pointer(core, address, 4U, TRUE);
 	}
-	pointer = op_exec_memory_pointer(core, address, 4U, TRUE);
 	if (pointer != NULL) {
 		op_exec_memory_write(pointer, 4U, value);
 	}

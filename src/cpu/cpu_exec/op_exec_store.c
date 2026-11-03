@@ -6,7 +6,7 @@
 #include "pmp.h"
 #include "riscv_decode.h"
 
-static int store_value(
+static inline int store_value(
 	TargetCoreType *core,
 	const RiscvDecodedInsn *decoded,
 	uint32 width)
@@ -17,13 +17,16 @@ static int store_value(
 	uint32 index;
 	uint8 *pointer;
 
-	if (!riscv_pmp_check(core, address, width, CpuMemoryAccess_WRITE)) {
-		return op_exec_memory_fault(core, address, 7U);
+	pointer = op_exec_memory_direct(core, address, width, CpuMemoryAccess_WRITE);
+	if (pointer == NULL) {
+		if (!riscv_pmp_check(core, address, width, CpuMemoryAccess_WRITE)) {
+			return op_exec_memory_fault(core, address, 7U);
+		}
+		pointer = op_exec_memory_pointer(core, address, width, TRUE);
 	}
 	if (((address & (width - 1U)) != 0U) && !CPU_CONFIG_ERBIUM_COMPAT) {
 		return op_exec_memory_fault(core, address, 6U);
 	}
-	pointer = op_exec_memory_pointer(core, address, width, TRUE);
 	if (pointer != NULL) {
 		op_exec_memory_write(pointer, width, value);
 	}
