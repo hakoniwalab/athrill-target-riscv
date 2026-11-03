@@ -1,11 +1,32 @@
+/*
+ * CPU clock and instruction counters, traps, the decode cache after code
+ * modification, misaligned accesses, Erbium counter CSRs, fence.i, wfi,
+ * the timer and the PLIC, driven directly through cpu_supply_clock().
+ *
+ * Instruction words used (hand-assembled):
+ *   0x00108093 addi x1, x1, 1      0x00000073 ecall
+ *   0x00100073 ebreak              0x00100293 addi x5, x0, 1
+ *   0x00200293 addi x5, x0, 2      0x0020a023 sw x2, 0(x1)
+ *   0x00c0006f jal x0, +12         0x0020b023 sd x2, 0(x1)
+ *   0x0000b183 ld x3, 0(x1)        0xb0002273 csrrs x4, mcycle, x0
+ *   0x0000100f fence.i             0x10500073 wfi
+ */
 #include "cpu.h"
 #include "std_device_ops.h"
-#include "mpu_ops.h"
-#include "std_errno.h"
 #include "std_cpu_ops.h"
 #include <stdio.h>
 #include <string.h>
 #include "peripheral/erbium_devices.h"
+
+#define HOST_MEMORY_SIZE 256U
+#include "common/host_memory_stub.h"
+
+#define INSN_ADDI_X1_1 0x00108093U
+#define INSN_ECALL 0x00000073U
+#define INSN_EBREAK 0x00100073U
+
+static unsigned failures;
+
 Std_ReturnType cpuemu_get_devcfg_value(const char *key, uint32 *value)
 {
 	(void)key;
@@ -13,168 +34,169 @@ Std_ReturnType cpuemu_get_devcfg_value(const char *key, uint32 *value)
 	return STD_E_INVALID;
 }
 
-static uint8 memory[256];
-int cpu_config_get_core_id_num(void)
-{
-	return 1;
-}
-Std_ReturnType mpu_get_pointer(CoreIdType id, AthrillAddrType a, uint8 **p)
-{
-	(void)id;
-	if (a >= sizeof(memory))return STD_E_INVALID;
-	*p = &memory[a];
-	return STD_E_OK;
-}
-Std_ReturnType mpu_get_data8(CoreIdType id, AthrillAddrType a, uint8*d)
-{
-	uint8*p;
-	if (mpu_get_pointer(id, a, &p) != STD_E_OK)return STD_E_INVALID;
-	*d = *p;
-	return STD_E_OK;
-}
-Std_ReturnType mpu_get_data16(CoreIdType id, AthrillAddrType a, uint16*d)
-{
-	uint8*p;
-	if (mpu_get_pointer(id, a, &p) != STD_E_OK)return STD_E_INVALID;
-	*d = (uint16)p[0] | (uint16)p[1] << 8;
-	return STD_E_OK;
-}
-Std_ReturnType mpu_get_data32(CoreIdType id, AthrillAddrType a, uint32*d)
-{
-	uint8*p;
-	if (mpu_get_pointer(id, a, &p) != STD_E_OK)return STD_E_INVALID;
-	*d = (uint32)p[0] | (uint32)p[1] << 8 | (uint32)p[2] << 16 | (uint32)p[3] << 24;
-	return STD_E_OK;
-}
-Std_ReturnType mpu_put_data8(CoreIdType id, AthrillAddrType a, uint8 d)
-{
-	uint8*p;
-	if (mpu_get_pointer(id, a, &p) != STD_E_OK)return STD_E_INVALID;
-	*p = d;
-	return STD_E_OK;
-}
-Std_ReturnType mpu_put_data16(CoreIdType id, AthrillAddrType a, uint16 d)
-{
-	return mpu_put_data8(id, a, (uint8)d) == STD_E_OK ? mpu_put_data8(id, a + 1,
-	        (uint8)(d >> 8)) : STD_E_INVALID;
-}
-Std_ReturnType mpu_put_data32(CoreIdType id, AthrillAddrType a, uint32 d)
-{
-	unsigned n;
-	for (n = 0; n < 4;
-	     n++)if (mpu_put_data8(id, a + n, (uint8)(d >> (8 * n))) != STD_E_OK)return STD_E_INVALID;
-	return STD_E_OK;
-}
-
 extern void device_init(CpuType *, DeviceClockType *);
 extern void device_supply_clock(DeviceClockType *);
-static void put_insn(unsigned a, uint32 v)
-{
-	memcpy(&memory[a], &v, 4);
-}
-int main(void)
-{
-	DeviceClockType clock;
-	unsigned n;
-	const uint32 addi = 0x00108093U, ecall = 0x00000073U, ebreak = 0x00100073U;
-	TargetCoreType *c;
-	memset(memory, 0, sizeof(memory));
-	for (n = 0; n < 10; n++)put_insn(n * 4, addi);
-	put_insn(40, ecall);
-	put_insn(44, ebreak);
-	virtual_cpu.core_id_num = 1;
-	cpu_init();
-	device_init(&virtual_cpu, &clock);
-	c = &virtual_cpu.cores[0].core;
-	for (n = 0; n < 10; n++) {
-		device_supply_clock(&clock);
-		cpu_supply_clock(0);
-		clock.clock++;
-	}
-	if (clock.clock != 10 || c->internal_cycle != 10 || c->internal_instret != 10 ||
-	    c->reg.x[1] != 10 ||
-	    virtual_cpu.cores[0].elaps != 10)return 1;
-	c->reg.csr.mtvec = 44;
-	cpu_supply_clock(0);
-	if (c->internal_cycle != 11 || c->internal_instret != 10 || c->reg.csr.mcause != 11 ||
-	    c->reg.csr.mepc != 40)return 2;
-	cpu_supply_clock(0);
-	if (c->reg.csr.mcause != 3 || c->internal_instret != 10)return 3;
 
-	/* Cache target 16, rewrite it through SW at 0, then execute the new form. */
+static void check(const char *name, int passed)
+{
+	printf("%s %s\n", passed ? "PASS" : "FAIL", name);
+	if (!passed) {
+		failures++;
+	}
+}
+
+static void put_insn(unsigned address, uint32 instruction)
+{
+	memcpy(&memory[address], &instruction, 4);
+}
+
+static TargetCoreType *reset_core(void)
+{
 	cpu_reset(0);
-	c = &virtual_cpu.cores[0].core;
+	return &virtual_cpu.cores[0].core;
+}
+
+static void check_counters_and_traps(DeviceClockType *clock)
+{
+	TargetCoreType *core = &virtual_cpu.cores[0].core;
+	unsigned n;
+
+	for (n = 0; n < 10; n++) {
+		put_insn(n * 4U, INSN_ADDI_X1_1);
+	}
+	put_insn(40, INSN_ECALL);
+	put_insn(44, INSN_EBREAK);
+	for (n = 0; n < 10; n++) {
+		device_supply_clock(clock);
+		cpu_supply_clock(0);
+		clock->clock++;
+	}
+	check("10 clocks: device clock, cycles, retired, x1, elapsed all 10",
+		clock->clock == 10U && core->internal_cycle == 10U && core->internal_instret == 10U
+		&& core->reg.x[1] == 10U && virtual_cpu.cores[0].elaps == 10U);
+
+	core->reg.csr.mtvec = 44;
+	cpu_supply_clock(0);
+	check("ecall: trap from Machine, counts a cycle but no retirement",
+		core->internal_cycle == 11U && core->internal_instret == 10U
+		&& core->reg.csr.mcause == 11U && core->reg.csr.mepc == 40U);
+	cpu_supply_clock(0);
+	check("ebreak at the trap vector: breakpoint, not retired",
+		core->reg.csr.mcause == 3U && core->internal_instret == 10U);
+}
+
+static void check_modified_code(void)
+{
+	TargetCoreType *core = reset_core();
+
+	/* Cache the instruction at 16, rewrite it with SW at 0, then run it. */
 	put_insn(16, 0x00100293U);
-	c->reg.pc = 16;
+	core->reg.pc = 16;
 	cpu_supply_clock(0);
 	put_insn(0, 0x0020a023U);
 	put_insn(4, 0x00c0006fU);
-	c->reg.x[1] = 16;
-	c->reg.x[2] = 0x00200293U;
-	c->reg.pc = 0;
+	core->reg.x[1] = 16;
+	core->reg.x[2] = 0x00200293U;
+	core->reg.pc = 0;
 	cpu_supply_clock(0);
 	cpu_supply_clock(0);
 	cpu_supply_clock(0);
-	if (c->reg.x[5] != 2)return 4;
+	check("rewritten instruction runs in its new form", core->reg.x[5] == 2U);
+}
 
-	/* Misaligned SD/LD are split and preserve the complete scalar value. */
-	cpu_reset(0);
-	c = &virtual_cpu.cores[0].core;
+static void check_misaligned_doubleword(void)
+{
+	TargetCoreType *core = reset_core();
+
 	put_insn(0, 0x0020b023U);
 	put_insn(4, 0x0000b183U);
-	c->reg.x[1] = 101;
-	c->reg.x[2] = 0x8877665544332211ULL;
+	core->reg.x[1] = 101;
+	core->reg.x[2] = 0x8877665544332211ULL;
 	cpu_supply_clock(0);
 #if CPU_CONFIG_ERBIUM_COMPAT
 	cpu_supply_clock(0);
-	if (c->reg.x[3] != 0x8877665544332211ULL)return 5;
+	check("misaligned sd/ld keep the whole value (Erbium)",
+		core->reg.x[3] == 0x8877665544332211ULL);
 #else
-	if (c->reg.csr.mcause != 6U)return 5;
+	check("misaligned sd: store address misaligned (standard)",
+		core->reg.csr.mcause == 6U);
 #endif
+}
 
-	/* Erbium architectural counters read zero while internal counters advance. */
-	cpu_reset(0);
-	c = &virtual_cpu.cores[0].core;
+static void check_counter_csr(void)
+{
+	TargetCoreType *core = reset_core();
+
 	put_insn(0, 0xb0002273U);
 	cpu_supply_clock(0);
-	if (c->reg.x[4] != 0 || c->internal_cycle != 1 || c->internal_instret != 1)return 6;
+	/* As the first instruction mcycle is 0 in both modes; Erbium keeps it 0. */
+	check("mcycle read as the first instruction is 0; the instruction is counted",
+		core->reg.x[4] == 0U && core->internal_cycle == 1U && core->internal_instret == 1U);
+}
 
-	cpu_reset(0);
-	c = &virtual_cpu.cores[0].core;
+static void check_fence_i(void)
+{
+	TargetCoreType *core = reset_core();
+
 	put_insn(0, 0x0000100fU);
-	c->reg.csr.mtvec = 32;
+	core->reg.csr.mtvec = 32;
 	cpu_supply_clock(0);
 #if CPU_CONFIG_ERBIUM_COMPAT
-	if (c->reg.csr.mcause != 30 || c->reg.csr.mtval != 0x0000100fU || c->reg.pc != 32)return 7;
+	check("fence.i raises cause 30 (Erbium)",
+		core->reg.csr.mcause == 30U && core->reg.csr.mtval == 0x0000100fU && core->reg.pc == 32U);
 #else
-	if (c->reg.pc != 4 || c->internal_instret != 1)return 7;
+	check("fence.i retires (standard)",
+		core->reg.pc == 4U && core->internal_instret == 1U);
 #endif
+}
 
-	cpu_reset(0);
-	c = &virtual_cpu.cores[0].core;
+static void check_wfi_and_timer(DeviceClockType *clock)
+{
+	TargetCoreType *core = reset_core();
+	uint32 value = 0;
+
 	put_insn(0, 0x10500073U);
-	c->reg.csr.mie = 1ULL << 3;
+	core->reg.csr.mie = 1ULL << 3;
 	cpu_supply_clock(0);
-	if (!c->is_halt)return 8;
+	check("wfi halts", core->is_halt);
 	intc_cpu_trigger_interrupt(0, 3);
-	if (c->is_halt)return 9;
-	{
-		uint32 value = 0;
-		clock.clock = 100;
-		device_supply_clock(&clock);
-		erbium_timer_ops.get_data32(NULL, 0, 0x80f40200ULL, &value);
-		if (value != 1U)return 10;
-	}
+	check("an enabled software interrupt releases wfi", !core->is_halt);
 
-	/* The public interrupt API raises a PLIC source and reaches trap entry. */
-	cpu_reset(0);
-	c = &virtual_cpu.cores[0].core;
-	c->reg.csr.mtvec = 32;
-	c->reg.csr.mstatus = 1ULL << 3;
-	c->reg.csr.mie = 1ULL << 11;
+	clock->clock = 100;
+	device_supply_clock(clock);
+	erbium_timer_ops.get_data32(NULL, 0, 0x80f40200ULL, &value);
+	check("mtime after 100 clocks at the default frequencies", value == 1U);
+}
+
+static void check_plic_interrupt(void)
+{
+	TargetCoreType *core = reset_core();
+
+	core->reg.csr.mtvec = 32;
+	core->reg.csr.mstatus = 1ULL << 3;
+	core->reg.csr.mie = 1ULL << 11;
 	intc_plic_ops.put_data32(NULL, 0, 0xa0002000ULL, 1U << 4);
-	if (intc_raise_intr(4U) != 0)return 11;
+	check("intc_raise_intr accepts PLIC source 4", intc_raise_intr(4U) == 0);
 	cpu_supply_clock(0);
-	if (c->reg.csr.mcause != ((1ULL << 63) | 11U) || c->reg.pc != 32U)return 12;
-	return 0;
+	check("the PLIC source reaches the machine external interrupt trap",
+		core->reg.csr.mcause == ((1ULL << 63) | 11U) && core->reg.pc == 32U);
+}
+
+int main(void)
+{
+	DeviceClockType clock;
+
+	memset(memory, 0, sizeof(memory));
+	virtual_cpu.core_id_num = 1;
+	cpu_init();
+	device_init(&virtual_cpu, &clock);
+	check_counters_and_traps(&clock);
+	check_modified_code();
+	check_misaligned_doubleword();
+	check_counter_csr();
+	check_fence_i();
+	check_wfi_and_timer(&clock);
+	check_plic_interrupt();
+	printf("%s\n", failures == 0U ? "SELFTEST PASS" : "SELFTEST FAIL");
+	return failures == 0U ? 0 : 1;
 }
