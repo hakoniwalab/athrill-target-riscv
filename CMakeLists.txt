@@ -158,10 +158,38 @@ if(BUILD_TESTING)
   set(RISCV_FIRMWARE_DIR "${CMAKE_BINARY_DIR}/firmware" CACHE PATH
     "Directory with the bare-metal test programs built by test/build-firmware.sh")
   set(NUTTX_ELF "" CACHE FILEPATH "NuttX minion:nsh ELF for the NuttX boot test (optional)")
+  # RISCV_FIRMWARE_TESTS=ON (acceptance builds): build the firmware with the
+  # Docker toolchain as part of the build, rebuild it when its sources
+  # change, register every firmware test and the objdump decoder cross-check,
+  # and fail at configure time when Docker or Python is missing instead of
+  # silently registering fewer tests.
+  option(RISCV_FIRMWARE_TESTS "Build the firmware and require all firmware tests" OFF)
   find_package(Python3 COMPONENTS Interpreter)
+  if(RISCV_FIRMWARE_TESTS)
+    find_program(DOCKER_EXECUTABLE docker)
+    if(NOT DOCKER_EXECUTABLE OR NOT Python3_FOUND)
+      message(FATAL_ERROR "RISCV_FIRMWARE_TESTS needs Docker (image "
+        "athrill-riscv-toolchain:ubuntu24, see tools/docker) and Python 3")
+    endif()
+    file(GLOB_RECURSE _firmware_sources CONFIGURE_DEPENDS
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/*.S" "${CMAKE_CURRENT_SOURCE_DIR}/test/*.ld"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64i/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64f/*.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/erbium/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/test/pmp/*.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/csr/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/test/fetch/*.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/mpu/*.c" "${CMAKE_CURRENT_SOURCE_DIR}/test/common/*.h")
+    add_custom_command(OUTPUT "${RISCV_FIRMWARE_DIR}/firmware.stamp"
+      COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/test/build-firmware.sh" "${RISCV_FIRMWARE_DIR}"
+      COMMAND "${CMAKE_COMMAND}" -E touch "${RISCV_FIRMWARE_DIR}/firmware.stamp"
+      DEPENDS ${_firmware_sources} "${CMAKE_CURRENT_SOURCE_DIR}/test/build-firmware.sh"
+      COMMENT "Building the bare-metal test firmware (Docker)")
+    add_custom_target(riscv-firmware ALL DEPENDS "${RISCV_FIRMWARE_DIR}/firmware.stamp")
+    add_test(NAME decoder-crosscheck-objdump COMMAND Python3::Interpreter
+      "${CMAKE_CURRENT_SOURCE_DIR}/test/crosscheck_decoder.py"
+      --dump $<TARGET_FILE:athrill-decoder-dump>)
+  endif()
   set(_runner "${CMAKE_CURRENT_SOURCE_DIR}/test/run_firmware_test.py")
   set(_erbium "${CMAKE_CURRENT_SOURCE_DIR}/test/erbium")
-  if(Python3_FOUND AND EXISTS "${RISCV_FIRMWARE_DIR}/rv64i-selftest.elf")
+  if(Python3_FOUND AND (RISCV_FIRMWARE_TESTS OR EXISTS "${RISCV_FIRMWARE_DIR}/rv64i-selftest.elf"))
     add_test(NAME athrill-malformed-elf COMMAND Python3::Interpreter
       "${ATHRILL_SOURCE_DIR}/test/malformed_elf_test.py"
       --athrill $<TARGET_FILE:athrill3>
@@ -203,8 +231,9 @@ if(BUILD_TESTING)
         --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64f/memory.txt"
         --elf "${RISCV_FIRMWARE_DIR}/rv64f-selftest-standard.elf" --clocks 3000000)
     endif()
-  elseif(Python3_FOUND)
-    message(STATUS "Firmware tests skipped: run test/build-firmware.sh ${RISCV_FIRMWARE_DIR}")
+  else()
+    message(WARNING "Firmware tests are NOT registered: build them with "
+      "test/build-firmware.sh ${RISCV_FIRMWARE_DIR} or configure with -DRISCV_FIRMWARE_TESTS=ON")
   endif()
   if(Python3_FOUND AND RISCV_ERBIUM_COMPAT AND NUTTX_ELF AND EXISTS "${NUTTX_ELF}")
     add_test(NAME firmware-nuttx-nsh COMMAND Python3::Interpreter "${_runner}"

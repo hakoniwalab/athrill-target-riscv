@@ -132,12 +132,22 @@ def check_words(args, failures):
     print(f"32-bit: {len(words)} words, {checked} decoded by Athrill")
 
 
+# Base opcodes whose only architectural effect is writing rd: with rd = x0
+# they change no state (HINT). OP-IMM (addi, slli, ...), OP (add, ...), LUI.
+NO_EFFECT_WITH_RD_X0 = {0x13, 0x33, 0x37}
+HINT_NAMES = {"c.nop", "c.addi", "c.li", "c.lui", "c.mv", "c.add", "c.slli", "c.slli64"}
+
+
 def is_hint(row, plain):
-    """A compressed HINT: objdump's c.nop-like text, our expansion writes x0."""
+    """A compressed HINT that Athrill expands to an instruction with no effect.
+
+    objdump names it as a HINT form, and the 32-bit expansion is an
+    instruction whose only effect is writing rd, with rd = x0.
+    """
     expanded = int(row[2], 16)
-    writes_x0 = ((expanded >> 7) & 31) == 0
-    return writes_x0 and plain.split()[0] in ("c.nop", "c.addi", "c.li", "c.lui", "c.mv",
-                                             "c.add", "c.slli", "c.slli64")
+    if plain.split()[0] not in HINT_NAMES:
+        return False
+    return ((expanded >> 7) & 31) == 0 and (expanded & 0x7f) in NO_EFFECT_WITH_RD_X0
 
 
 def check_compressed(args, failures):

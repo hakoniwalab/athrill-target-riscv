@@ -67,6 +67,12 @@ cmake -S . -B build -DNUTTX_ELF=/path/to/nuttx   # NUTTX_ELF is optional
 cmake --build build && (cd build && ctest)
 ```
 
+For acceptance runs configure with `-DRISCV_FIRMWARE_TESTS=ON`: the firmware
+is then built as part of the build and rebuilt when its sources change, the
+objdump decoder cross-check becomes a CTest, and configuration fails if Docker
+or Python is missing. Without it, a configure that finds no firmware warns
+that the firmware tests are not registered.
+
 Each self-test prints `PASS <check>` / `FAIL <check>` lines and ends with
 `SELFTEST PASS` or `SELFTEST FAIL <count>`; `test/run_firmware_test.py`
 fails the CTest unless `SELFTEST PASS` appears with no `FAIL` line. With
