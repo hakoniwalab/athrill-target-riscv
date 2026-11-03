@@ -21,13 +21,20 @@ on the AIFoundry Erbium board's NuttX environment, with Hakoniwa.
   system registers, and a bring-up byte output register at `0x10000000`.
   Device registers are 32-bit; every load or store touches each covered
   register once.
-- **Software:** NuttX `minion:nsh` boots and NuttX `ostest` passes.
+- **Software:** NuttX `minion:nsh` boots, NuttX `ostest` passes, and PX4
+  `aifoundry_erbium_default` runs (see [PX4](#px4)).
 - **Decoder:** mask/match tables generated from `riscv-opcodes` (see below),
   a two-level cold decoder, and a decode cache with one array of decoded
   instructions per 4 KiB code page (two-byte granularity), allocated on
   first execution. A cache hit is reused only at the same
   privilege and PMP setting it was fetched with, and only when the
   instruction bytes are unchanged.
+
+## PX4
+
+[docs/px4-erbium.md](docs/px4-erbium.md) builds the upstream PX4
+`aifoundry_erbium_default` firmware and runs it on Athrill (SIH quadcopter on
+NuttX), with an optional MAVLink build for QGroundControl.
 
 ## Opcode generation
 
