@@ -78,7 +78,7 @@ add_library(athrill_riscv_cpu STATIC
 riscv_target(athrill_riscv_cpu)
 
 set(DEVICE_SOURCES ${ATHRILL_DEVICE_COMMON_SOURCES} ${ATHRILL_DEVICE_THREAD_SOURCES}
-  src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
+  src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_uart_tcp.c src/device/peripheral/erbium_timer.c
   src/device/intc/intc.c src/debugger/executor/concrete_executor/dbg_target_cpu.c
   src/debugger/executor/concrete_executor/dbg_target_serial.c)
 if(ATHRILL_ENABLE_EXDEV)
@@ -121,7 +121,7 @@ if(BUILD_TESTING)
   add_test(NAME athrill-pmp COMMAND athrill-pmp-test)
   add_executable(athrill-clock-counter-test test/clock_counter_test.c
     ${RISCV_CPU_SOURCES}
-    src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_timer.c
+    src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_uart_tcp.c src/device/peripheral/erbium_timer.c
     src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
@@ -132,7 +132,7 @@ if(BUILD_TESTING)
   add_executable(athrill-mmio-register-test test/mmio_register_test.c)
   riscv_target(athrill-mmio-register-test)
   add_test(NAME athrill-mmio-register COMMAND athrill-mmio-register-test)
-  add_executable(athrill-uart-tx-test test/uart_tx_test.c src/device/peripheral/erbium_uart.c)
+  add_executable(athrill-uart-tx-test test/uart_tx_test.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_uart_tcp.c)
   riscv_target(athrill-uart-tx-test)
   add_test(NAME athrill-uart-tx COMMAND athrill-uart-tx-test)
   # Decoder dump for test/crosscheck_decoder.py (needs Docker; not a CTest).

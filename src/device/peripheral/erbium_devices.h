@@ -21,5 +21,11 @@ void erbium_timer_reset(void);
 void erbium_timer_tick(DeviceClockType *clock);
 Std_ReturnType erbium_uart_receive(uint8 data);
 void erbium_uart_open_rx_file(const char *path);
+Std_ReturnType erbium_uart_tcp_open(uint32 port);
+std_bool erbium_uart_tcp_enabled(void);
+std_bool erbium_uart_tcp_pending(void);
+std_bool erbium_uart_tcp_get(uint8 *data);
+void erbium_uart_tcp_put(uint8 data);
+void erbium_uart_tcp_flush(void);
 void erbium_timer_configure(uint32 cpu_frequency, uint32 timer_frequency);
 #endif

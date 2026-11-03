@@ -59,3 +59,17 @@ virtual clock while the RX FIFO has room, so the same file arrives at the same
 virtual times on every run. Data appended later is picked up within about a
 million clocks. The `firmware-nuttx-nsh-file-input` CTest runs NuttX this way
 with `nsh_help_input.txt`.
+
+## UART over TCP
+
+With
+
+```text
+DEVICE_CONFIG_ERBIUM_UART_TCP_PORT 5760
+```
+
+Athrill listens on 127.0.0.1:5760 (local host only) for one client and connects
+it to the UART: received bytes enter the RX FIFO one per character period,
+transmitted bytes are sent about every 10 us of virtual time. With the PX4
+Erbium build that runs MAVLink on UART0, QGroundControl connects through a TCP
+link to 127.0.0.1:5760. Use `-t -1` to run without a clock limit.

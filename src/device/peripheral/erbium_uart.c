@@ -75,7 +75,12 @@ static void tx_push(uint8 data)
 	else {
 		tx_empty_clock += UART_CHARACTER_CLOCKS;
 	}
-	(void)dbg_serial_putchar(0, data);
+	if (erbium_uart_tcp_enabled()) {
+		erbium_uart_tcp_put(data);
+	}
+	else {
+		(void)dbg_serial_putchar(0, data);
+	}
 }
 
 static uint32 status_value(void)
@@ -286,6 +291,37 @@ static void receive_from_file(DeviceClockType *clock)
 	}
 }
 
+/*
+ * UART over TCP (erbium_uart_tcp.c): received bytes enter the RX FIFO one
+ * per period like the file input; transmitted bytes are sent every
+ * UART_TCP_FLUSH_CLOCKS (about 10 us at 200 MHz).
+ */
+#define UART_TCP_FLUSH_CLOCKS (UART_CHARACTER_CLOCKS * 67U)
+static uint64 tcp_next_flush_clock;
+
+static void exchange_with_tcp(DeviceClockType *clock)
+{
+	uint8 data;
+	uint64 until;
+
+	if (((uart_now % UART_CHARACTER_CLOCKS) == 0U) && (rx_count < UART_FIFO_SIZE)
+		&& erbium_uart_tcp_get(&data)) {
+		(void)erbium_uart_receive(data);
+	}
+	if (uart_now >= tcp_next_flush_clock) {
+		erbium_uart_tcp_flush();
+		tcp_next_flush_clock = uart_now + UART_TCP_FLUSH_CLOCKS;
+	}
+	/* A clock skip may not jump over the next byte or the next flush. */
+	until = tcp_next_flush_clock - uart_now;
+	if (erbium_uart_tcp_pending() && (rx_count < UART_FIFO_SIZE)) {
+		until = UART_CHARACTER_CLOCKS - (uart_now % UART_CHARACTER_CLOCKS);
+	}
+	if (until < clock->min_intr_interval) {
+		clock->min_intr_interval = until;
+	}
+}
+
 void erbium_uart_tick(DeviceClockType *clock)
 {
 	uint64 until;
@@ -293,6 +329,9 @@ void erbium_uart_tick(DeviceClockType *clock)
 	uart_now = clock->clock;
 	if (rx_file != NULL) {
 		receive_from_file(clock);
+	}
+	if (erbium_uart_tcp_enabled()) {
+		exchange_with_tcp(clock);
 	}
 	if (ie == 0U) {
 		return;
