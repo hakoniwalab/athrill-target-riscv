@@ -18,7 +18,8 @@ struct RiscvDecodedInsn;
 typedef int (*RiscvDecodedExecutor)(struct TargetCoreTypeTag *, const struct RiscvDecodedInsn *);
 typedef struct RiscvDecodedInsn {
     uint64 pc, immediate;
-    uint32 instruction;
+    uint32 instruction;	/* the base instruction (compressed ones expanded) */
+    uint32 raw;	/* the instruction bits in memory, compared on a cache hit */
     RiscvDecodedExecutor execute;
     uint8 *code;
     /*
@@ -48,6 +49,19 @@ typedef struct {
     RiscvCsrType csr;
 } CpuRegisterType;
 
+/*
+ * The address ranges of the active PMP entries, worked out once per PMP
+ * setting (pmp_epoch) instead of on every access.
+ */
+typedef struct {
+    std_bool valid;
+    uint64 epoch;
+    uint8 count;
+    uint8 cfg[16];
+    uint64 lo[16];
+    uint64 hi[16];
+} RiscvPmpTable;
+
 typedef struct TargetCoreTypeTag {
     uint32 real_elaps;
     CoreIdType core_id;
@@ -57,9 +71,10 @@ typedef struct TargetCoreTypeTag {
     OpDecodedCodeType *decoded_code;
     std_bool access_fault;
     uint64 internal_cycle, internal_instret, pmp_epoch;
+    RiscvPmpTable pmp_table;
     uint64 trace_store_address, trace_store_value;
     uint8 trace_store_size, trace_store_valid;
-#define RISCV_DECODE_CACHE_ENTRIES 2048U
+#define RISCV_DECODE_CACHE_ENTRIES 16384U
     RiscvDecodedInsn decode_cache[RISCV_DECODE_CACHE_ENTRIES];
 } TargetCoreType;
 

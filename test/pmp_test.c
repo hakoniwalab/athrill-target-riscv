@@ -69,6 +69,7 @@ static void check_napot_and_lock(void)
 	core.reg.privilege = RISCV_PRIV_M;
 	check("Machine allowed outside any entry", riscv_pmp_check(&core, 0x4010, 1, CpuMemoryAccess_READ));
 	core.reg.csr.pmpcfg[0] = PMP_LOCKED_NAPOT_X;
+	core.pmp_epoch++;	/* a CSR write advances the epoch */
 	check("locked entry without R restricts Machine too", !riscv_pmp_check(&core, 0x4000, 1, CpuMemoryAccess_READ));
 }
 

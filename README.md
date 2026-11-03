@@ -23,7 +23,7 @@ on the AIFoundry Erbium board's NuttX environment, with Hakoniwa.
   register once.
 - **Software:** NuttX `minion:nsh` boots and NuttX `ostest` passes.
 - **Decoder:** mask/match tables generated from `riscv-opcodes` (see below),
-  a two-level cold decoder, and a 2,048-entry direct-mapped decode cache
+  a two-level cold decoder, and a 16,384-entry direct-mapped decode cache
   indexed at two-byte PC granularity. A cache hit is reused only at the same
   privilege and PMP setting it was fetched with, and only when the
   instruction bytes are unchanged.

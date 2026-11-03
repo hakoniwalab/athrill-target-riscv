@@ -37,18 +37,50 @@ static std_bool pmp_range(const TargetCoreType *core, unsigned i, uint64 *lo, ui
     }
 }
 
+static void pmp_table_build(TargetCoreType *core)
+{
+    RiscvPmpTable *table = &core->pmp_table;
+    uint64 lo;
+    uint64 hi;
+    unsigned i;
+
+    table->count = 0U;
+    for (i = 0; i < 16; i++) {
+        if (!pmp_range(core, i, &lo, &hi)) {
+            continue;
+        }
+        table->cfg[table->count] = pmp_cfg(core, i);
+        table->lo[table->count] = lo;
+        table->hi[table->count] = hi;
+        table->count++;
+    }
+    table->epoch = core->pmp_epoch;
+    table->valid = TRUE;
+}
+
+/*
+ * The first active entry (in priority order) that overlaps the access
+ * decides; an access that only partly overlaps it fails, also in Machine
+ * mode. Without an overlapping entry only Machine mode is allowed.
+ * Every change of a PMP CSR advances pmp_epoch, which rebuilds the table.
+ */
 std_bool riscv_pmp_check(const TargetCoreType *core, uint64 addr, uint32 size, CpuMemoryAccessType access)
 {
+    TargetCoreType *mutable_core = (TargetCoreType *)core;	/* the table is a cache */
+    const RiscvPmpTable *table = &core->pmp_table;
     uint64 end;
     unsigned i;
+    uint8 cfg;
+
     if (size == 0 || addr > 0xffffffffffffffffULL - (size - 1U)) return FALSE;
+    if (!table->valid || table->epoch != core->pmp_epoch) {
+        pmp_table_build(mutable_core);
+    }
     end = addr + size;
-    for (i = 0; i < 16; i++) {
-        uint64 lo, hi;
-        uint8 cfg = pmp_cfg(core, i);
-        if (!pmp_range(core, i, &lo, &hi)) continue;
-        if (addr >= hi || end <= lo) continue;
-        if (addr < lo || end > hi) return FALSE;
+    for (i = 0; i < table->count; i++) {
+        if (addr >= table->hi[i] || end <= table->lo[i]) continue;
+        if (addr < table->lo[i] || end > table->hi[i]) return FALSE;
+        cfg = table->cfg[i];
         if (core->reg.privilege == RISCV_PRIV_M && (cfg & PMP_L) == 0) return TRUE;
         if (access == CpuMemoryAccess_READ) return (cfg & PMP_R) != 0;
         if (access == CpuMemoryAccess_WRITE) return (cfg & PMP_W) != 0;

@@ -156,6 +156,8 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 	TargetCoreType *core = &virtual_cpu.cores[id].core;
 	RiscvDecodedInsn *decoded;
 	uint32 insn = 0U;	/* stays 0 in the trace when no instruction is fetched */
+	uint32 raw;
+	std_bool use_entry;
 	uint8 length;
 	std_bool cacheable;
 	int retired = RISCV_EXEC_TRAP;
@@ -177,19 +179,19 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 		goto clock_done;
 	}
 	decoded = &core->decode_cache[(core->reg.pc >> 1) & (RISCV_DECODE_CACHE_ENTRIES - 1U)];
-	if (!core->is_halt && decode_cache_hit(core, decoded)) {
-		insn = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8;
-		if (decoded->length == 4U) insn |= (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
-		else if (!riscv_expand_compressed((uint16)insn, &insn)) insn = 0;
-		if (insn == decoded->instruction) {
-			retired = decoded->execute(core, decoded);
-		} else if (riscv_decode_fill(core->reg.pc, insn, decoded->length, decoded)) {
-			decode_cache_remember_permission(core, decoded);
-			retired = decoded->execute(core, decoded);
-		} else {
-			core->decoded_code = NULL;
-			riscv_raise_exception(core, 2, insn);
-		}
+	use_entry = !core->is_halt && decode_cache_hit(core, decoded);
+	if (use_entry) {
+		/*
+		 * Reuse the entry only while the bytes in memory are unchanged;
+		 * modified code (any length) is fetched and decoded again below.
+		 */
+		raw = (uint32)decoded->code[0] | (uint32)decoded->code[1] << 8;
+		if (decoded->length == 4U) raw |= (uint32)decoded->code[2] << 16 | (uint32)decoded->code[3] << 24;
+		use_entry = (raw == decoded->raw);
+	}
+	if (use_entry) {
+		insn = decoded->instruction;
+		retired = decoded->execute(core, decoded);
 	} else if (!core->is_halt && fetch(core, &insn, &length, &cacheable) == STD_E_OK
 		&& !core->access_fault) {
 		uint8 *code = NULL;
@@ -198,6 +200,7 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 		    riscv_decode_fill(core->reg.pc, expanded, length, decoded) &&
 		    bus_get_pointer(core->core_id, core->reg.pc, &code) == STD_E_OK) {
 			decoded->code = code;
+			decoded->raw = insn;
 			decode_cache_remember_permission(core, decoded);
 			retired = decoded->execute(core, decoded);
 			if (!cacheable) {
