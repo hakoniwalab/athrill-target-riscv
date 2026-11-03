@@ -139,15 +139,24 @@ athrill-build/athrill3 -c1 \
 Erbium has one UART, used by the NSH console in the default build. The patch
 `docs/px4/erbium-mavlink.patch` adds a board variant `aifoundry_erbium_mavlink`
 that runs MAVLink on that UART instead (console and system log go to the RAM
-log, readable with `dmesg` from the MAVLink shell). As the console then has
-no input, the board initialisation gives NSH an empty pipe to read, so that
-NSH keeps running after the start script. It also sets
+log, readable with `dmesg` from the MAVLink shell). The log is also copied
+to Athrill's bring-up output register (`0x10000000`), so it shows in the
+terminal running Athrill; this variant therefore runs on Athrill only, not on
+Erbium hardware. As the console has no input, the board initialisation gives
+NSH an empty pipe to read, so that NSH keeps running after the start script.
+It also sets
 `CONFIG_LINE_MAX=128`: with the default 80, the line in `rc.serial` that builds
 the MAVLink arguments is cut off.
+
+PX4 compiles NuttX inside its source tree and does not recompile it when
+the NuttX configuration changes, so the objects of the default build are
+removed first.
 
 ```bash
 cd "$HOME/athrill-px4"
 git -C PX4 apply "$PWD/athrill-target-riscv/docs/px4/erbium-mavlink.patch"
+git -C PX4/platforms/nuttx/NuttX/nuttx clean -fdXq
+git -C PX4/platforms/nuttx/NuttX/apps clean -fdXq
 docker run --rm \
   -v "$PWD/PX4:/src" \
   -v "$PWD/tools/xpack-riscv-none-elf-gcc-15.2.0-1:/opt/riscv:ro" \
@@ -160,7 +169,7 @@ ls -l PX4/build/aifoundry_erbium_mavlink/aifoundry_erbium_mavlink.elf
 client on `127.0.0.1` (local host only). Athrill runs PX4 faster than real
 time; `DEBUG_FUNC_REAL_TIME 1` keeps it at real time, so that the vehicle
 in QGroundControl moves at its real speed. `-t -1` runs without a clock
-limit; stop Athrill with Ctrl-C.
+limit; stop Athrill with Ctrl-C. The terminal shows PX4's boot log.
 
 ```bash
 cd "$HOME/athrill-px4"
