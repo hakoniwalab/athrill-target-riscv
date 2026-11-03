@@ -139,7 +139,9 @@ athrill-build/athrill3 -c1 \
 Erbium has one UART, used by the NSH console in the default build. The patch
 `docs/px4/erbium-mavlink.patch` adds a board variant `aifoundry_erbium_mavlink`
 that runs MAVLink on that UART instead (console and system log go to the RAM
-log, readable with `dmesg` from the MAVLink shell). It also sets
+log, readable with `dmesg` from the MAVLink shell). As the console then has
+no input, the board initialisation gives NSH an empty pipe to read, so that
+NSH keeps running after the start script. It also sets
 `CONFIG_LINE_MAX=128`: with the default 80, the line in `rc.serial` that builds
 the MAVLink arguments is cut off.
 
@@ -174,7 +176,10 @@ athrill-build/athrill3 -c1 \
 
 In QGroundControl add a TCP link (Application Settings, Comm Links, Add: type
 TCP, server `127.0.0.1`, port 5760) and connect. The vehicle appears in Hold
-mode with the SIH GPS position.
+mode with the SIH GPS position. QGroundControl reports "not ready" because
+there is no RC transmitter, and warns that HITL simulation is enabled (SIH
+sets `SYS_HITL` 2); both are expected. Takeoff from QGroundControl arms the
+vehicle and climbs to about 2.5 m, where it holds.
 
 ## Notes
 

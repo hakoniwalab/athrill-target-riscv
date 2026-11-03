@@ -120,10 +120,18 @@ index 0000000000..a384715e48
 +CONFIG_NSH_QUOTE=y
 +CONFIG_LINE_MAX=128
 diff --git a/boards/aifoundry/erbium/src/init.c b/boards/aifoundry/erbium/src/init.c
-index 31f2ce3c5d..5476a185a6 100644
+index 31f2ce3c5d..c3ddb062db 100644
 --- a/boards/aifoundry/erbium/src/init.c
 +++ b/boards/aifoundry/erbium/src/init.c
-@@ -57,10 +57,20 @@ __EXPORT void board_on_reset(int status)
+@@ -44,6 +44,7 @@
+ 
+ #include <sys/mount.h>
+ #include <syslog.h>
++#include <unistd.h>
+ 
+ #include "board_config.h"
+ 
+@@ -57,10 +58,35 @@ __EXPORT void board_on_reset(int status)
  	UNUSED(status);
  }
  
@@ -139,6 +147,21 @@ index 31f2ce3c5d..5476a185a6 100644
  
 +#if defined(CONFIG_CONSOLE_SYSLOG)
 +	riscv_serialinit();
++
++	/* NSH runs the start script and then reads commands from its input, the
++	 * console. The syslog console always reads end of file, so NSH would
++	 * exit, and its exit runs the C++ static destructors - among them the
++	 * parameter layers, which loses the airframe's defaults (no rotors, no
++	 * outputs). This runs in NSH's task before it reads: give it an empty
++	 * pipe as input instead, whose write end stays open, so it waits for
++	 * ever. */
++	int nsh_input[2];
++
++	if (pipe(nsh_input) == 0) {
++		dup2(nsh_input[0], STDIN_FILENO);
++		close(nsh_input[0]);
++	}
++
 +#endif
 +
  	/* There is no flash storage driver yet: keep parameters and dataman in
