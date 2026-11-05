@@ -189,3 +189,6 @@ ls -l PX4/build/aifoundry_erbium_hakoniwa/aifoundry_erbium_hakoniwa.elf
     v5.0.0 code, run with the libraries of that core.
 
   `fly.py` passed three times in a row, with the MuJoCo viewer at real time: 2.50 to 2.51 m in the last 10 s.
+- 2026-11-05, after the sensor device reports Athrill's own time to Hakoniwa (athrill-device #3), macOS, released
+  Hakoniwa Drone v5.0.0 `mac.zip` and this release's `athrill3` and `aifoundry_erbium_hakoniwa.elf`: `fly.py` 3/3
+  PASS, 2.50 m, viewer on. Without the viewer the whole system runs at **RTF 2.07 to 2.11** while hovering.
