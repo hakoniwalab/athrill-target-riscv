@@ -103,6 +103,16 @@ echo "DEVICE_CONFIG_ERBIUM_UART_TCP_PORT 5760" >> hakoniwa-device-config.txt
 
 ## 6. Fly
 
+If a Hakoniwa core of another version ran on this machine before, its runtime files are still in
+`/var/lib/hakoniwa/mmap`. Clear them once, with no Hakoniwa process running:
+
+```bash
+/usr/local/hakoniwa/bin/hako-cmd recover
+```
+
+Otherwise the aircraft service stops at start with `HAKONIWA_FAIL_STOP ... (legacy flock.bin)`.
+
+
 Three terminals. In the first, Hakoniwa Drone's aircraft service: the only conductor, with the MuJoCo viewer
 at real time.
 
