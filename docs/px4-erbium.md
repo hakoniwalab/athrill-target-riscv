@@ -19,13 +19,13 @@ versions listed at the end.
 
 ## 1. Workspace and Athrill
 
-Athrill is the core (`toppers/athrill`, branch `cpp`) next to the RISC-V
+Athrill is the core (`toppers/athrill` v3.0.0) next to the RISC-V
 target (`hakoniwalab/athrill-target-riscv`).
 
 ```bash
 mkdir -p "$HOME/athrill-px4"
 cd "$HOME/athrill-px4"
-git clone -b cpp https://github.com/toppers/athrill.git athrill
+git clone --branch v3.0.0 https://github.com/toppers/athrill.git athrill
 git clone https://github.com/hakoniwalab/athrill-target-riscv.git
 cmake -S athrill-target-riscv -B athrill-build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 cmake --build athrill-build --parallel
