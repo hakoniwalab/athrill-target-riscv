@@ -171,3 +171,11 @@ ls -l PX4/build/aifoundry_erbium_hakoniwa/aifoundry_erbium_hakoniwa.elf
 
 - 2026-11-03, Hakoniwa Drone PRO, macOS: the x500 arms, takes off to 2.5 m and holds; RTF 2.14 on the ground,
   2.18 hovering (no viewer).
+- 2026-11-05, macOS (Apple M2 Pro), the steps above with:
+  - athrill3 and `aifoundry_erbium_hakoniwa.elf` built as in [px4-erbium.md](px4-erbium.md) and
+    [Build PX4 yourself](#build-px4-yourself), from a fresh clone of PX4;
+  - the sensor device of step 3, against hakoniwa-core-pro `ed26571`;
+  - in place of `mac.zip` (Hakoniwa Drone v5.0.0 was not released yet), Hakoniwa Drone PRO built from the same
+    v5.0.0 code, run with the libraries of that core.
+
+  `fly.py` passed three times in a row, with the MuJoCo viewer at real time: 2.50 to 2.51 m in the last 10 s.

@@ -43,6 +43,9 @@ NuttX), with an optional MAVLink build for QGroundControl.
 [docs/hakoniwa.md](docs/hakoniwa.md) flies PX4 with the Hakoniwa Drone x500 in MuJoCo (Processor-in-the-Loop),
 with the sensor device of [athrill-device](https://github.com/hakoniwalab/athrill-device).
 
+Prebuilt `athrill3` (macOS arm64, Linux x86_64) and the three PX4 ELFs (`aifoundry_erbium_default`,
+`_mavlink`, `_hakoniwa`): [Release v0.1.0](https://github.com/hakoniwalab/athrill-target-riscv/releases/tag/v0.1.0).
+
 ## Opcode generation
 
 The generated decoder files are pinned to `riscv/riscv-opcodes` commit
