@@ -40,6 +40,9 @@ on the AIFoundry Erbium board's NuttX environment, with Hakoniwa.
 `aifoundry_erbium_default` firmware and runs it on Athrill (SIH quadcopter on
 NuttX), with an optional MAVLink build for QGroundControl.
 
+[docs/hakoniwa.md](docs/hakoniwa.md) flies PX4 with the Hakoniwa Drone x500 in MuJoCo (Processor-in-the-Loop),
+with the sensor device of [athrill-device](https://github.com/hakoniwalab/athrill-device).
+
 ## Opcode generation
 
 The generated decoder files are pinned to `riscv/riscv-opcodes` commit
