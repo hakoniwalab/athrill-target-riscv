@@ -121,4 +121,6 @@ typedef struct TargetCoreTypeTag {
 static inline AthrillAddrType cpu_get_pc(const TargetCoreType *core) { return core->reg.pc; }
 static inline uint32 cpu_get_sp(const TargetCoreType *core) { return (uint32)core->reg.x[CPU_REG_SP]; }
 
+void riscv_idle_spin_halt_init(void);
+
 #endif

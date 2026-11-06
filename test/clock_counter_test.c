@@ -15,6 +15,7 @@
 #include "cpu.h"
 #include "std_device_ops.h"
 #include "std_cpu_ops.h"
+#include "athrill_idle_spin_halt.h"
 #include <stdio.h>
 #include <string.h>
 #include "peripheral/erbium_devices.h"
@@ -27,6 +28,7 @@
 #define INSN_EBREAK 0x00100073U
 
 static unsigned failures;
+static uint32 spin_halt_option;
 
 #ifdef EXDEV_ENABLE
 /* No external devices in this test. */
@@ -42,8 +44,14 @@ void device_init_athrill_exdev(void)
 
 Std_ReturnType cpuemu_get_devcfg_value(const char *key, uint32 *value)
 {
-	(void)key;
-	(void)value;
+	if (strcmp(key, "DEVICE_CONFIG_SPIN_HALT") == 0) {
+		*value = spin_halt_option;
+		return STD_E_OK;
+	}
+	if (strcmp(key, "DEBUG_FUNC_ENABLE_SKIP_CLOCK") == 0) {
+		*value = 1U;
+		return STD_E_OK;
+	}
 	return STD_E_INVALID;
 }
 
@@ -57,6 +65,15 @@ Std_ReturnType cpuemu_get_devcfg_string(const char *key, char **value)
 	(void)key;
 	(void)value;
 	return STD_E_INVALID;
+}
+
+int symbol_get_func(char *name, uint32 length, AthrillAddrType *address, uint32 *size)
+{
+	(void)name;
+	(void)length;
+	(void)address;
+	(void)size;
+	return -1;
 }
 
 extern void device_init(CpuType *, DeviceClockType *);
@@ -276,6 +293,58 @@ static void check_wfi_and_timer(DeviceClockType *clock)
 	check("mtime after 100 clocks at the default frequencies", value == 1U);
 }
 
+/*
+ * A hand-made one-instruction image. With spin halt enabled, JAL x0, 0 and
+ * C.J 0 retire once and halt, so the main-loop rule can skip to the next
+ * device event. Disabled, the same architectural state is reached by
+ * executing the loop for every clock.
+ */
+static void check_spin_halt(void)
+{
+	TargetCoreType *core;
+	uint16 compressed_jump = 0xa001U;
+	uint64 skipped_clock;
+	uint64 register_hash;
+
+	spin_halt_option = 1U;
+	athrill_idle_spin_halt_init();
+	core = reset_core();
+	put_insn(0, 0x0000006fU);
+	cpu_supply_clock(0);
+	register_hash = core->reg.x[0] | core->reg.x[1] | core->reg.x[2];
+	skipped_clock = core->is_halt ? 1000U : 1U;
+	check("j . halts after one retirement and permits clock skip",
+		core->is_halt && core->reg.pc == 0U && core->internal_cycle == 1U
+		&& core->internal_instret == 1U && register_hash == 0U && skipped_clock == 1000U);
+
+	spin_halt_option = 0U;
+	athrill_idle_spin_halt_init();
+	core = reset_core();
+	put_insn(0, 0x0000006fU);
+	for (skipped_clock = 0U; skipped_clock < 1000U; skipped_clock++) {
+		cpu_supply_clock(0);
+	}
+	check("j . with the option off keeps executing with the same register and PC results",
+		!core->is_halt && core->reg.pc == 0U && core->internal_cycle == 1000U
+		&& core->internal_instret == 1000U
+		&& (core->reg.x[0] | core->reg.x[1] | core->reg.x[2]) == register_hash);
+
+	spin_halt_option = 1U;
+	athrill_idle_spin_halt_init();
+	core = reset_core();
+	memcpy(&memory[0], &compressed_jump, sizeof(compressed_jump));
+	cpu_supply_clock(0);
+	check("c.j 0 halts after one retirement", core->is_halt && core->reg.pc == 0U
+		&& core->internal_cycle == 1U && core->internal_instret == 1U);
+
+	core = reset_core();
+	put_insn(0, 0x0000006fU);
+	core->reg.csr.mie = 1ULL << 3U;
+	core->reg.csr.mip = 1ULL << 3U;
+	cpu_supply_clock(0);
+	check("a pending interrupt prevents spin halt", !core->is_halt && core->reg.pc == 0U);
+}
+
 static void check_plic_interrupt(void)
 {
 	TargetCoreType *core = reset_core();
@@ -307,6 +376,7 @@ int main(void)
 	check_counter_csr();
 	check_fence_i();
 	check_wfi_and_timer(&clock);
+	check_spin_halt();
 	check_plic_interrupt();
 	printf("%s\n", failures == 0U ? "SELFTEST PASS" : "SELFTEST FAIL");
 	return failures == 0U ? 0 : 1;

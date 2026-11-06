@@ -7,6 +7,7 @@
 #include "pmp.h"
 #include "intc.h"
 #include "erbium_devices.h"
+#include "athrill_idle_spin_halt.h"
 #include <string.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -46,6 +47,7 @@ static void reset_core(TargetCoreType *core)
 void cpu_init(void)
 {
 	CoreIdType i;
+	riscv_idle_spin_halt_init();
 	riscv_decode_init();
 	for (i = 0; i < cpu_config_get_core_id_num(); i++) {
 		virtual_cpu.cores[i].core.core_id = i;
@@ -162,6 +164,9 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 		core->is_halt = FALSE;
 		goto clock_done;
 	}
+	if (athrill_idle_spin_halt_before_execute(id)) {
+		goto clock_done;
+	}
 	decoded = riscv_decode_lookup(core, core->reg.pc);
 	use_entry = !core->is_halt && (decoded != NULL) && decode_cache_hit(core, decoded, core->reg.pc);
 	if (use_entry) {
@@ -199,6 +204,9 @@ Std_ReturnType cpu_supply_clock(CoreIdType id)
 			core->decoded_code = NULL;
 			riscv_raise_exception(core, 2, insn);
 		}
+	}
+	if (!core->is_halt && (core->reg.pc == trace_pc)) {
+		athrill_idle_spin_halt_after_execute(id, trace_pc);
 	}
 clock_done:
 	if (riscv_trace_enabled && !core->is_halt) {
@@ -292,6 +300,7 @@ static std_bool batch_can_continue(const TargetCoreType *core)
 static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
 {
 	RiscvDecodedInsn *decoded;
+	uint64 pc = core->reg.pc;
 	int retired;
 
 	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
@@ -303,6 +312,9 @@ static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
 	}
 	core->access_fault = FALSE;
 	retired = decoded->execute(core, decoded);
+	if (core->reg.pc == pc) {
+		athrill_idle_spin_halt_after_execute(id, pc);
+	}
 	core->internal_cycle++;
 	if (retired == RISCV_EXEC_RETIRED) {
 		core->internal_instret++;
@@ -409,9 +421,15 @@ static inline uint64 execute_block(TargetCoreType *core, CoreIdType id, uint64 b
 	 */
 	core->access_fault = FALSE;
 	while (done + 1U < length) {
+		if (athrill_idle_spin_halt_idle_ready(id)) {
+			goto ended;
+		}
 		(*clock)++;
 		retired = entry->execute(core, entry);
 		done++;
+		if (core->reg.pc == entry->pc) {
+			athrill_idle_spin_halt_after_execute(id, entry->pc);
+		}
 		if (retired != RISCV_EXEC_RETIRED) {
 			trapped++;
 		}
@@ -423,9 +441,16 @@ static inline uint64 execute_block(TargetCoreType *core, CoreIdType id, uint64 b
 	}
 	core->internal_cycle += done;
 	core->internal_instret += done - trapped;
+	if (athrill_idle_spin_halt_idle_ready(id)) {
+		virtual_cpu.cores[id].elaps += done;
+		return done;
+	}
 	(*clock)++;
 	retired = entry->execute(core, entry);
 	done++;
+	if (core->reg.pc == entry->pc) {
+		athrill_idle_spin_halt_after_execute(id, entry->pc);
+	}
 	core->internal_cycle++;
 	if (retired == RISCV_EXEC_RETIRED) {
 		core->internal_instret++;
@@ -450,6 +475,15 @@ Std_ReturnType cpu_supply_clocks(CoreIdType core_id, uint64 max_clocks, uint64 *
 	while (n < max_clocks) {
 		if (!batch_can_continue(core)) {
 			break;
+		}
+		if (athrill_idle_spin_halt_idle_ready(core_id)) {
+			(*clock)++;
+			n++;
+			err = cpu_supply_clock(core_id);
+			if (err != STD_E_OK) {
+				break;
+			}
+			continue;
 		}
 		if (!riscv_trace_enabled) {
 			done = execute_block(core, core_id, max_clocks - n, clock);
