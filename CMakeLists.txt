@@ -125,6 +125,7 @@ if(BUILD_TESTING)
   add_test(NAME athrill-pmp COMMAND athrill-pmp-test)
   add_executable(athrill-clock-counter-test test/clock_counter_test.c
     ${RISCV_CPU_SOURCES}
+    "${ATHRILL_SRC_DIR}/main/athrill_idle_spin_halt.c"
     src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_uart_tcp.c src/device/peripheral/erbium_timer.c
     src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
@@ -146,7 +147,7 @@ if(BUILD_TESTING)
     athrill_riscv_device athrill_bus athrill_mpu athrill_std
     athrill_riscv_config athrill_riscv_device)
   add_executable(athrill-decode-benchmark test/decode_benchmark.c
-    ${RISCV_CPU_SOURCES})
+    ${RISCV_CPU_SOURCES} test/common/idle_spin_halt_stub.c)
   riscv_target(athrill-decode-benchmark)
   add_executable(athrill-decode-test test/decode_test.c test/common/host_cpuemu_stub.c)
   riscv_target(athrill-decode-test)
