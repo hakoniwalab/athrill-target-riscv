@@ -56,6 +56,7 @@ riscv_target(athrill_cui)
 
 set(RISCV_CPU_SOURCES
   src/cpu/config/cpu_config.c
+  src/cpu/idle_spin_halt_riscv.c
   src/device/intc/intc_cpu.c
   src/cpu/cpu_dec/riscv_decode.c
   src/cpu/cpu_dec/riscv_instruction_table.c
