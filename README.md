@@ -3,6 +3,9 @@
 This repository contains the RV64 target for Athrill. Its goal is to run PX4
 on the AIFoundry Erbium board's NuttX environment, with Hakoniwa.
 
+See the [configuration reference](docs/configuration.md) for every Erbium target parameter and the link to the
+common Athrill options, memory map, and core parameters.
+
 ## Status
 
 - **ISA:** RV64IMFC with Zicsr and Zifencei; Machine and User mode
