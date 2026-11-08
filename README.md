@@ -1,7 +1,23 @@
 # Athrill RISC-V target
 
-This repository contains the RV64 target for Athrill. Its goal is to run PX4
-on the AIFoundry Erbium board's NuttX environment, with Hakoniwa.
+The RV64 target of [Athrill](https://github.com/toppers/athrill). It runs firmware built for the AIFoundry / OpenHW
+Foundation **Erbium** board unchanged: **PX4** on NuttX, flown in SIH or with the Hakoniwa Drone x500 in MuJoCo, and
+**Zephyr** applications built for Zephyr's own `erbium` board.
+
+| Firmware | What is shown |
+| --- | --- |
+| PX4 `aifoundry_erbium_default` (upstream PX4 board target) | SIH quadcopter on NuttX; MAVLink to QGroundControl in the `_mavlink` build |
+| PX4 `aifoundry_erbium_hakoniwa` | flies the Hakoniwa Drone x500 (Processor-in-the-Loop), [docs/hakoniwa.md](docs/hakoniwa.md) |
+| Zephyr `hello_world`, `synchronization`, `philosophers`, built for Zephyr's `erbium` | run unchanged on the same board, [examples/zephyr](examples/zephyr) |
+
+The board comes from its Devicetree, athrill-device's `boards/erbium/erbium.dtb`, which includes Zephyr's
+`openhwgroup/erbium.dtsi`. PX4 and Zephyr run on the same blob; nothing in Athrill is specific to either.
+The [STM32 target](https://github.com/hakoniwalab/athrill-target-stm32) does the same on Cortex-M7, with PX4,
+ArduPilot and Zephyr.
+
+Prebuilt `athrill3` (macOS arm64, Linux x86_64), the three PX4 ELFs (`aifoundry_erbium_default`, `_mavlink`,
+`_hakoniwa`) and the Zephyr sample ELFs:
+[Release v0.2.0](https://github.com/hakoniwalab/athrill-target-riscv/releases/tag/v0.2.0).
 
 See the [configuration reference](docs/configuration.md) for every Erbium target parameter and the link to the
 common Athrill options, memory map, and core parameters.
@@ -28,8 +44,8 @@ common Athrill options, memory map, and core parameters.
   The build needs athrill-device next to this checkout
   (`-DATHRILL_DEVICE_DIR` to place it elsewhere). Every device register
   access ends the CPU batch, so devices see the clock of the access.
-- **Software:** NuttX `minion:nsh` boots, NuttX `ostest` passes, and PX4
-  `aifoundry_erbium_default` runs (see [PX4](#px4)).
+- **Software:** NuttX `minion:nsh` boots, NuttX `ostest` passes, PX4
+  `aifoundry_erbium_default` runs (see [PX4](#px4)), and Zephyr's samples run (see [Zephyr](#zephyr)).
 - **Decoder:** mask/match tables generated from `riscv-opcodes` (see below),
   a two-level cold decoder, and a decode cache with one array of decoded
   instructions per 4 KiB code page (two-byte granularity), allocated on
@@ -56,8 +72,16 @@ NuttX), with an optional MAVLink build for QGroundControl.
 [docs/hakoniwa.md](docs/hakoniwa.md) flies PX4 with the Hakoniwa Drone x500 in MuJoCo (Processor-in-the-Loop),
 with the sensor device of [athrill-device](https://github.com/hakoniwalab/athrill-device).
 
-Prebuilt `athrill3` (macOS arm64, Linux x86_64) and the three PX4 ELFs (`aifoundry_erbium_default`,
-`_mavlink`, `_hakoniwa`): [Release v0.1.0](https://github.com/hakoniwalab/athrill-target-riscv/releases/tag/v0.1.0).
+## Zephyr
+
+[examples/zephyr](examples/zephyr) builds Zephyr's `hello_world`, `synchronization` and `philosophers` for Zephyr's
+`erbium` board, unchanged, and checks them on Athrill. `synchronization` must give 9 alternating greetings in 5
+virtual seconds, and every philosopher must eat at least 10 times in 30. Zephyr's Erbium support (board, SoC, the
+Erbium UART driver) is upstream; nothing is added for it here.
+
+```sh
+examples/zephyr/run.sh hello_world-erbium.elf 1
+```
 
 ## Opcode generation
 
