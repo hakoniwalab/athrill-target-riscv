@@ -15,8 +15,9 @@ What you need, all public:
   definition `config/pdudef/drone-pdudef-athrill-px4.json`;
 - [hakoniwa-core-pro](https://github.com/hakoniwalab/hakoniwa-core-pro), the Hakoniwa core, at the revision
   Hakoniwa Drone was built with;
-- [athrill-device](https://github.com/hakoniwalab/athrill-device): the sensor device (`board/common`) and, for
-  this board, the PX4 driver and board patch (`board/erbium`);
+- [athrill-device](https://github.com/hakoniwalab/athrill-device): the board's Devicetree
+  (`boards/erbium/erbium-hakoniwa.dtb`), the sensor device (`board/common`), which Athrill loads as the board's
+  plugin, and, for this board, the PX4 driver and board patch (`board/erbium`);
 - this repository's `athrill3` and the PX4 ELF `aifoundry_erbium_hakoniwa.elf`, from the release (or built, see
   [Build PX4 yourself](#build-px4-yourself)).
 
@@ -27,7 +28,7 @@ Drone (`brew install glfw`). Everything goes into one workspace:
 ```bash
 mkdir -p "$HOME/athrill-hakoniwa"
 cd "$HOME/athrill-hakoniwa"
-git clone --branch v0.1.0 https://github.com/hakoniwalab/athrill-target-riscv.git
+git clone --branch v0.2.0 https://github.com/hakoniwalab/athrill-target-riscv.git
 ```
 
 ## 1. Hakoniwa core
@@ -64,8 +65,10 @@ Built for this board (64-bit Athrill), against the core of step 1, with the PDU 
 
 ```bash
 cd "$HOME/athrill-hakoniwa"
-git clone --branch v3.0.0 https://github.com/toppers/athrill.git
+git clone https://github.com/toppers/athrill.git
+git -C athrill checkout bc8d76a
 git clone https://github.com/hakoniwalab/athrill-device.git
+git -C athrill-device checkout ff23daf
 cmake -S athrill-device/board/common -B athrill-device/build-erbium -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_PREFIX_PATH=/usr/local/hakoniwa -DATHRILL_ADDRESS_WIDTH=64 \
   -DHAKO_PDU_REGISTRY_DIR="$PWD/hakoniwa-core-pro/hakoniwa-pdu-registry"
@@ -74,15 +77,15 @@ cmake --build athrill-device/build-erbium -j
 
 ## 4. athrill3 and PX4
 
-From this repository's release v0.1.0:
+From this repository's release v0.2.0:
 
 ```bash
 cd "$HOME/athrill-hakoniwa"
-curl -LO https://github.com/hakoniwalab/athrill-target-riscv/releases/download/v0.1.0/athrill3-v0.1.0-macos-arm64.tar.gz
-curl -LO https://github.com/hakoniwalab/athrill-target-riscv/releases/download/v0.1.0/aifoundry_erbium_hakoniwa.elf
-curl -LO https://github.com/hakoniwalab/athrill-target-riscv/releases/download/v0.1.0/SHA256SUMS
+curl -LO https://github.com/hakoniwalab/athrill-target-riscv/releases/download/v0.2.0/athrill3-v0.2.0-macos-arm64.tar.gz
+curl -LO https://github.com/hakoniwalab/athrill-target-riscv/releases/download/v0.2.0/aifoundry_erbium_hakoniwa.elf
+curl -LO https://github.com/hakoniwalab/athrill-target-riscv/releases/download/v0.2.0/SHA256SUMS
 shasum -a 256 -c --ignore-missing SHA256SUMS
-tar xzf athrill3-v0.1.0-macos-arm64.tar.gz
+tar xzf athrill3-v0.2.0-macos-arm64.tar.gz
 ```
 
 `aifoundry_erbium_hakoniwa` is PX4 for Erbium without SIH, with the airframe x500 v2 and the parameters of the
@@ -90,15 +93,17 @@ Hakoniwa Drone x500 built in, and MAVLink on the UART.
 
 ## 5. Athrill settings
 
-The sensor device is mapped at `0x20000000` and raises PLIC source 5:
+The board is athrill-device's `erbium-hakoniwa.dtb`: the Erbium with the sensor device's registers at
+`0x20000000`, raising PLIC source 5. The sensor device you built is its plugin:
 
 ```bash
 cd "$HOME/athrill-hakoniwa"
 cp athrill-target-riscv/test/erbium/memory.txt hakoniwa-memory.txt
-echo "DEV, 0x20000000, $PWD/athrill-device/build-erbium/libhako_sensor_device.dylib" >> hakoniwa-memory.txt
 cp athrill-target-riscv/test/erbium/device_config.txt hakoniwa-device-config.txt
 cat athrill-device/board/erbium/config/device_config-hakoniwa.txt >> hakoniwa-device-config.txt
 echo "DEVICE_CONFIG_ERBIUM_UART_TCP_PORT 5760" >> hakoniwa-device-config.txt
+echo "DEVICE_CONFIG_DEVICE_TREE $PWD/athrill-device/boards/erbium/erbium-hakoniwa.dtb" >> hakoniwa-device-config.txt
+echo "DEVICE_CONFIG_DEVICE_PLUGIN_0 hakoniwa%2Csensor-registers=$PWD/athrill-device/build-erbium/libhako_sensor_device.dylib" >> hakoniwa-device-config.txt
 ```
 
 ## 6. Fly
@@ -126,7 +131,7 @@ In the second, PX4 on Athrill:
 
 ```bash
 cd "$HOME/athrill-hakoniwa"
-DYLD_LIBRARY_PATH=/usr/local/hakoniwa/lib athrill3-v0.1.0-macos-arm64/athrill3 -c1 \
+DYLD_LIBRARY_PATH=/usr/local/hakoniwa/lib athrill3-v0.2.0-macos-arm64/athrill3 -c1 \
   -m hakoniwa-memory.txt -d hakoniwa-device-config.txt -t -1 aifoundry_erbium_hakoniwa.elf
 ```
 
@@ -152,7 +157,7 @@ To stop, press Ctrl+C in the first two terminals, then run `/usr/local/hakoniwa/
   does not carry the core's libraries: put `/usr/local/hakoniwa/lib` on `LD_LIBRARY_PATH` for it too. It needs
   `libglfw3` and `libopengl0`.
 - The sensor device is `libhako_sensor_device.so`.
-- `athrill3-v0.1.0-linux-x86_64.tar.gz`, checked with `sha256sum -c --ignore-missing SHA256SUMS`.
+- `athrill3-v0.2.0-linux-x86_64.tar.gz`, checked with `sha256sum -c --ignore-missing SHA256SUMS`.
 - `LD_LIBRARY_PATH` in place of `DYLD_LIBRARY_PATH` for Athrill.
 
 ## Build PX4 yourself
