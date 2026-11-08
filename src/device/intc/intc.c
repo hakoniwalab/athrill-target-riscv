@@ -57,6 +57,14 @@ void intc_plic_set_source(uint32 source, std_bool level)
 	intc_plic_update();
 }
 
+std_bool intc_plic_source_asserted(uint32 source)
+{
+	if ((source < INTC_PLIC_SOURCE_MIN) || (source > INTC_PLIC_SOURCE_MAX)) {
+		return FALSE;
+	}
+	return ((plic_asserted & (1U << source)) != 0U) ? TRUE : FALSE;
+}
+
 int intc_raise_intr(uint32 intno)
 {
 	/* External interrupt numbers are the PLIC source IDs 1 through 6. */

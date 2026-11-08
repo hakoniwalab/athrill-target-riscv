@@ -3,6 +3,8 @@
 #include "intc.h"
 #include "peripheral/erbium_devices.h"
 #include "std_device_ops.h"
+#include "device_tree.h"
+#include "target_host.h"
 #ifdef EXDEV_ENABLE
 #include "athrill_device.h"
 #endif
@@ -57,6 +59,9 @@ void device_init(CpuType *cpu, DeviceClockType *clock)
 		&& (cpuemu_get_devcfg_value("DEVICE_CONFIG_ERBIUM_UART_TCP_PORT", &tcp_port) == STD_E_OK)) {
 		(void)erbium_uart_tcp_open(tcp_port);
 	}
+	/* The board's athrill-device models (DEVICE_CONFIG_DEVICE_TREE), if any:
+	 * their registers come before the target's devices at the same address. */
+	(void)riscv_device_tree_build();
 }
 
 void device_reset(CpuType *cpu, DeviceClockType *clock)
@@ -64,10 +69,20 @@ void device_reset(CpuType *cpu, DeviceClockType *clock)
 	device_init(cpu, clock);
 }
 
+/*
+ * The target's devices tick unless an athrill-device model has replaced
+ * them (its registers cover the device's base): UART at 0x02004000, machine
+ * timer at 0x80f40200. Then the models tick, in the runtime's order.
+ */
 void erbium_devices_supply_clock(DeviceClockType *clock)
 {
-	erbium_uart_tick(clock);
-	erbium_timer_tick(clock);
+	if (!riscv_host_mmio_covers(0x02004000ULL)) {
+		erbium_uart_tick(clock);
+	}
+	if (!riscv_host_mmio_covers(0x80f40200ULL)) {
+		erbium_timer_tick(clock);
+	}
+	riscv_device_tree_tick(clock);
 }
 
 void device_supply_clock(DeviceClockType *clock)
