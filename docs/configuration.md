@@ -33,6 +33,13 @@ local interrupts and the PLIC (sources 1 to 6) stay in the target. The machine t
 
 `DEVICE_CONFIG_ERBIUM_TIMER_FREQ` is no longer read: the frequency is part of the board description.
 
+The Hakoniwa sensor device (PX4's `hako_sensor_device` driver) is the node `hakoniwa,sensor-registers` of
+`boards/erbium/erbium-hakoniwa.dtb` (at `0x20000000`, PLIC source 5); its model is the plugin library of athrill-device
+`board/common`, with the Hakoniwa link (`libhako_sensor_device`) or the Hakoniwa Drone aircraft in process
+(`libhako_sensor_device_inproc`). Its settings are the `HAKO_SENSOR_DEVICE_*` and `HAKO_AIRCRAFT_*` lines of athrill-device
+`board/erbium/README.md`. A memory.txt `DEV` line cannot be combined with `DEVICE_CONFIG_DEVICE_TREE`: Athrill stops
+with an error naming the node to use.
+
 ## Erbium UART
 
 The Erbium UART (the athrill-device model `openhwgroup,shakti-uart-v1`) has 16-byte RX and TX FIFOs and advances
