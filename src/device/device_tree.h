@@ -15,7 +15,6 @@
 std_bool riscv_device_tree_build(void);
 void riscv_device_tree_tick(DeviceClockType *clock);
 void riscv_device_tree_destroy(void);
-std_bool riscv_device_tree_active(void);
 /* Host console input for a model listening on the channel (ABI 1.17). */
 std_bool riscv_device_tree_console_input(uint8 data);
 

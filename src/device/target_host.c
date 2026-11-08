@@ -190,20 +190,6 @@ void riscv_host_mmio_unregister(void *context, AthrillDeviceMmioToken token)
 	}
 }
 
-std_bool riscv_host_mmio_covers(uint64 address)
-{
-	uint32 i;
-	for (i = 0U; i < MAX_MMIO_ADAPTERS; i++) {
-		if (mmio[i].active && mmio[i].region_index < mpu_address_map.dynamic_map_num) {
-			const MpuAddressRegionType *r = &mpu_address_map.dynamic_map[mmio[i].region_index];
-			if (address >= r->start && address - r->start < r->size) {
-				return TRUE;
-			}
-		}
-	}
-	return FALSE;
-}
-
 sint32 riscv_host_irq_resolve(void *context, const AthrillDeviceSpecifier *spec,
                               AthrillDeviceIrqLine *line)
 {

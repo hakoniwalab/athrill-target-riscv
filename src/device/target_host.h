@@ -15,8 +15,6 @@
 sint32 riscv_host_mmio_register(void *context, uint64 address, uint64 size,
 	const AthrillDeviceMmioOps *ops, void *instance, AthrillDeviceMmioToken *token);
 void riscv_host_mmio_unregister(void *context, AthrillDeviceMmioToken token);
-/* TRUE when a model's registers cover the address (the target's own device there is replaced). */
-std_bool riscv_host_mmio_covers(uint64 address);
 sint32 riscv_host_irq_resolve(void *context, const AthrillDeviceSpecifier *spec,
 	AthrillDeviceIrqLine *line);
 sint32 riscv_host_irq_set(void *context, AthrillDeviceIrqLine line, std_bool asserted);

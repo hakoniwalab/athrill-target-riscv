@@ -179,11 +179,6 @@ void riscv_device_tree_destroy(void)
 	}
 }
 
-std_bool riscv_device_tree_active(void)
-{
-	return device_tree_runtime != NULL ? TRUE : FALSE;
-}
-
 std_bool riscv_device_tree_console_input(uint8 data)
 {
 	return (device_tree_runtime != NULL &&
