@@ -11,6 +11,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 CpuType virtual_cpu;
 uint32 riscv_trace_enabled;
@@ -44,9 +45,31 @@ static void reset_core(TargetCoreType *core)
 	core->reg.csr.mhartid = id;
 }
 
+/*
+ * The run's end state on stderr, for comparing runs exactly: the
+ * instructions-retired counter (minstret, which the guest may also write)
+ * and the registers that tell where the hart stopped.
+ */
+static void print_final_state(void)
+{
+	const TargetCoreType *core = &virtual_cpu.cores[0].core;
+
+	fprintf(stderr, "FINAL minstret=%llu pc=0x%016llx ra=0x%016llx sp=0x%016llx priv=%u halt=%d"
+		" mstatus=0x%016llx mcause=0x%016llx\n",
+		(unsigned long long)core->internal_instret, (unsigned long long)core->reg.pc,
+		(unsigned long long)core->reg.x[1], (unsigned long long)core->reg.x[CPU_REG_SP],
+		(unsigned)core->reg.privilege, (int)core->is_halt,
+		(unsigned long long)core->reg.csr.mstatus, (unsigned long long)core->reg.csr.mcause);
+}
+
 void cpu_init(void)
 {
+	static std_bool final_registered = FALSE;
 	CoreIdType i;
+	if (!final_registered) {
+		(void)atexit(print_final_state);
+		final_registered = TRUE;
+	}
 	riscv_idle_spin_halt_init();
 	riscv_decode_init();
 	for (i = 0; i < cpu_config_get_core_id_num(); i++) {
