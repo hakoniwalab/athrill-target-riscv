@@ -2,7 +2,7 @@
 #define ATHRILL_RISCV_MPU_CONFIG_H
 #include "std_types.h"
 #include "loader/elf.h"
-#define MPU_CONFIG_REGION_NUM UINT_C(5)
+#define MPU_CONFIG_REGION_NUM UINT_C(2)
 #define MPU_ADDRESS_REGION_INX_SERIAL 0U
 #define ELF_MACHINE_TYPE EM_RISCV
 #endif

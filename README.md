@@ -18,12 +18,16 @@ common Athrill options, memory map, and core parameters.
   and a denormal input is reported in fcsr bit 31.
   `-DRISCV_ERBIUM_COMPAT=OFF` builds the standard RV64 behaviour used for
   comparisons with the Sail model.
-- **Devices:** the Erbium UART (16-character TX FIFO sending one character
-  every 30 clocks of the virtual clock, RX FIFO, TX-empty and RX interrupts),
-  machine timer (`mtime`/`mtimecmp`, frequency from the device config), PLIC,
-  system registers, and a bring-up byte output register at `0x10000000`.
-  Device registers are 32-bit; every load or store touches each covered
-  register once.
+- **Devices:** the board comes from a Devicetree
+  (`DEVICE_CONFIG_DEVICE_TREE`, [athrill-device](https://github.com/hakoniwalab/athrill-device)
+  `boards/erbium/erbium.dtb`): the Erbium UART (16-character TX FIFO sending
+  one character every 30 clocks of the virtual clock, RX FIFO, TX-empty and
+  RX interrupts), the machine timer (`mtime`/`mtimecmp`) and the system
+  registers are athrill-device models. The target keeps the hart's local
+  interrupts, the PLIC and a bring-up byte output register at `0x10000000`.
+  The build needs athrill-device next to this checkout
+  (`-DATHRILL_DEVICE_DIR` to place it elsewhere). Every device register
+  access ends the CPU batch, so devices see the clock of the access.
 - **Software:** NuttX `minion:nsh` boots, NuttX `ostest` passes, and PX4
   `aifoundry_erbium_default` runs (see [PX4](#px4)).
 - **Decoder:** mask/match tables generated from `riscv-opcodes` (see below),

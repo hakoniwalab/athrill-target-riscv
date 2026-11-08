@@ -20,16 +20,31 @@ versions listed at the end.
 ## 1. Workspace and Athrill
 
 Athrill is the core (`toppers/athrill` v3.0.0) next to the RISC-V
-target (`hakoniwalab/athrill-target-riscv`).
+target (`hakoniwalab/athrill-target-riscv`) and athrill-device
+(`hakoniwalab/athrill-device`). The Erbium board's devices (UART, machine
+timer, system registers) are athrill-device models, built at start-up from
+its Devicetree `boards/erbium/erbium.dtb`; the CPU and its interrupt
+controllers (the hart's local interrupts and the PLIC) are the target's.
 
 ```bash
 mkdir -p "$HOME/athrill-px4"
 cd "$HOME/athrill-px4"
 git clone --branch v3.0.0 https://github.com/toppers/athrill.git athrill
 git clone https://github.com/hakoniwalab/athrill-target-riscv.git
+git clone https://github.com/hakoniwalab/athrill-device.git
 cmake -S athrill-target-riscv -B athrill-build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF
 cmake --build athrill-build --parallel
 ls -l athrill-build/athrill3
+```
+
+The device configuration names the board's Devicetree. Paths are resolved
+from the directory Athrill starts in; every command below starts in
+`$HOME/athrill-px4`:
+
+```bash
+cd "$HOME/athrill-px4"
+cp athrill-target-riscv/test/erbium/device_config.txt erbium-device-config.txt
+echo "DEVICE_CONFIG_DEVICE_TREE athrill-device/boards/erbium/erbium.dtb" >> erbium-device-config.txt
 ```
 
 ## 2. RISC-V toolchain for PX4
@@ -78,15 +93,15 @@ ls -l PX4/build/aifoundry_erbium_default/aifoundry_erbium_default.elf
 ## 4. Run PX4
 
 `-c1` is one hart, `-m` the memory map (16 MiB at `0x40000000`), `-d` the
-device configuration (200 MHz CPU, 2 MHz timer, clock skip while the CPU waits
-in WFI) and `-t` the number of clocks to run: 2,000,000,000 clocks are 10 s of
+device configuration (200 MHz CPU, the board's Devicetree, clock skip while
+the CPU waits in WFI) and `-t` the number of clocks to run: 2,000,000,000 clocks are 10 s of
 simulated time. Without the debugger (no `-i`) Athrill runs as fast as it can.
 
 ```bash
 cd "$HOME/athrill-px4"
 athrill-build/athrill3 -c1 \
   -m athrill-target-riscv/test/erbium/memory.txt \
-  -d athrill-target-riscv/test/erbium/device_config.txt \
+  -d erbium-device-config.txt \
   -t 2000000000 \
   PX4/build/aifoundry_erbium_default/aifoundry_erbium_default.elf
 ```
@@ -121,7 +136,7 @@ list:
 ```bash
 cd "$HOME/athrill-px4"
 printf 'sleep 12\ntop once\n' > px4-commands.txt
-cp athrill-target-riscv/test/erbium/device_config.txt px4-device-config.txt
+cp erbium-device-config.txt px4-device-config.txt
 echo "DEVICE_CONFIG_ERBIUM_UART_RX_FILE $PWD/px4-commands.txt" >> px4-device-config.txt
 athrill-build/athrill3 -c1 \
   -m athrill-target-riscv/test/erbium/memory.txt \
@@ -173,7 +188,7 @@ limit; stop Athrill with Ctrl-C. The terminal shows PX4's boot log.
 
 ```bash
 cd "$HOME/athrill-px4"
-cp athrill-target-riscv/test/erbium/device_config.txt px4-qgc-device-config.txt
+cp erbium-device-config.txt px4-qgc-device-config.txt
 echo "DEVICE_CONFIG_ERBIUM_UART_TCP_PORT 5760" >> px4-qgc-device-config.txt
 echo "DEBUG_FUNC_REAL_TIME 1" >> px4-qgc-device-config.txt
 athrill-build/athrill3 -c1 \
@@ -193,8 +208,9 @@ vehicle and climbs to about 2.5 m, where it holds.
 ## Notes
 
 - Simulated time: Athrill counts 200,000,000 clocks per simulated second
-  (`DEVICE_CPU_FREQ 200`), and the machine timer runs at 2 MHz
-  (`DEVICE_CONFIG_ERBIUM_TIMER_FREQ 2000000`), which must equal NuttX's
+  (`DEVICE_CPU_FREQ 200`), and the machine timer runs at 2 MHz (the
+  `clock-frequency` of the timer node in athrill-device
+  `boards/erbium/erbium-athrill.dtsi`), which must equal NuttX's
   `CONFIG_ERBIUM_MTIMER_FREQ`. PX4's uptime then equals Athrill's simulated
   time.
 - Speed (Apple M-series, macOS): 15 s of PX4 time take about 7.3 s, i.e.

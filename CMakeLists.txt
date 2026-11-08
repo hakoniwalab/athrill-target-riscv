@@ -97,7 +97,7 @@ add_library(athrill_riscv_cpu STATIC
 riscv_target(athrill_riscv_cpu)
 
 set(DEVICE_SOURCES ${ATHRILL_DEVICE_COMMON_SOURCES} ${ATHRILL_DEVICE_THREAD_SOURCES}
-  src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_uart_tcp.c src/device/peripheral/erbium_timer.c
+  src/device/device.c
   src/device/intc/intc.c src/device/target_host.c src/device/device_tree.c
   src/debugger/executor/concrete_executor/dbg_target_cpu.c
   src/debugger/executor/concrete_executor/dbg_target_serial.c)
@@ -143,8 +143,7 @@ if(BUILD_TESTING)
   add_executable(athrill-clock-counter-test test/clock_counter_test.c
     ${RISCV_CPU_SOURCES}
     "${ATHRILL_SRC_DIR}/main/athrill_idle_spin_halt.c"
-    src/device/device.c src/device/peripheral/erbium_sysreg.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_uart_tcp.c src/device/peripheral/erbium_timer.c
-    src/device/intc/intc.c)
+    src/device/device.c src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
   add_executable(athrill-symbol-lookup-test "${ATHRILL_SOURCE_DIR}/test/symbol_lookup_test.c"
@@ -154,9 +153,6 @@ if(BUILD_TESTING)
   add_executable(athrill-mmio-register-test test/mmio_register_test.c)
   riscv_target(athrill-mmio-register-test)
   add_test(NAME athrill-mmio-register COMMAND athrill-mmio-register-test)
-  add_executable(athrill-uart-tx-test test/uart_tx_test.c src/device/peripheral/erbium_uart.c src/device/peripheral/erbium_uart_tcp.c)
-  riscv_target(athrill-uart-tx-test)
-  add_test(NAME athrill-uart-tx COMMAND athrill-uart-tx-test)
   # Decoder dump for test/crosscheck_decoder.py (needs Docker; not a CTest).
   add_executable(athrill-decoder-dump test/decoder_dump.c test/common/host_cpuemu_stub.c)
   riscv_target(athrill-decoder-dump)
@@ -211,6 +207,11 @@ if(BUILD_TESTING)
   endif()
   set(_runner "${CMAKE_CURRENT_SOURCE_DIR}/test/run_firmware_test.py")
   set(_erbium "${CMAKE_CURRENT_SOURCE_DIR}/test/erbium")
+  # The board from athrill-device's Erbium Devicetree (absolute path for CTest).
+  file(READ "${_erbium}/device_config.txt" _erbium_base_config)
+  set(_erbium_config "${CMAKE_BINARY_DIR}/erbium-device-config.txt")
+  file(WRITE "${_erbium_config}"
+    "${_erbium_base_config}DEVICE_CONFIG_DEVICE_TREE ${ATHRILL_DEVICE_DIR}/boards/erbium/erbium.dtb\n")
   if(Python3_FOUND AND (RISCV_FIRMWARE_TESTS OR EXISTS "${RISCV_FIRMWARE_DIR}/rv64i-selftest.elf"))
     add_test(NAME athrill-malformed-elf COMMAND Python3::Interpreter
       "${ATHRILL_SOURCE_DIR}/test/malformed_elf_test.py"
@@ -244,7 +245,7 @@ if(BUILD_TESTING)
         --elf "${RISCV_FIRMWARE_DIR}/rv64f-selftest-erbium.elf" --clocks 3000000)
       add_test(NAME firmware-erbium-devices COMMAND Python3::Interpreter "${_runner}"
         --athrill $<TARGET_FILE:athrill3>
-        --memory "${_erbium}/memory.txt" --device-config "${_erbium}/device_config.txt"
+        --memory "${_erbium}/memory.txt" --device-config "${_erbium_config}"
         --elf "${RISCV_FIRMWARE_DIR}/erbium-device-test.elf"
         --command "serial 0 Z" --command cont --timeout 30)
     else()
@@ -260,11 +261,11 @@ if(BUILD_TESTING)
   if(Python3_FOUND AND RISCV_ERBIUM_COMPAT AND NUTTX_ELF AND EXISTS "${NUTTX_ELF}")
     add_test(NAME firmware-nuttx-nsh COMMAND Python3::Interpreter "${_runner}"
       --athrill $<TARGET_FILE:athrill3>
-      --memory "${_erbium}/memory.txt" --device-config "${_erbium}/device_config.txt"
+      --memory "${_erbium}/memory.txt" --device-config "${_erbium_config}"
       --elf "${NUTTX_ELF}" --command "serial 0 help\\n" --command cont
       --expect "Builtin Apps:" --timeout 60)
     # The same without the debugger (-t): the UART input comes from a file.
-    file(READ "${_erbium}/device_config.txt" _erbium_device_config)
+    file(READ "${_erbium_config}" _erbium_device_config)
     file(WRITE "${CMAKE_BINARY_DIR}/nuttx-file-input-device-config.txt"
       "${_erbium_device_config}DEVICE_CONFIG_ERBIUM_UART_RX_FILE ${_erbium}/nsh_help_input.txt\n")
     add_test(NAME firmware-nuttx-nsh-file-input COMMAND Python3::Interpreter "${_runner}"

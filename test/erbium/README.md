@@ -5,14 +5,18 @@ top-level README); the device test is `build/firmware/erbium-device-test.elf`
 and runs as the `firmware-erbium-devices` CTest. It covers UART output, three
 machine-timer interrupts, one received character through the PLIC, and the
 TX-empty interrupt after the TX FIFO drains while the CPU waits in WFI with
-clock skip enabled. The exact TX timing (16-character FIFO, one character per
-30 clocks) is checked by the `athrill-uart-tx` unit test.
+clock skip enabled. The devices are athrill-device models built from its Erbium
+Devicetree; the CTest adds `DEVICE_CONFIG_DEVICE_TREE` to `device_config.txt`.
+The exact TX timing (16-character FIFO, one character per 30 clocks) is checked
+by athrill-device's `shakti-uart` unit test.
 
 Run Athrill interactively:
 
 ```sh
+cp test/erbium/device_config.txt build/erbium-dt.txt
+echo "DEVICE_CONFIG_DEVICE_TREE ../athrill-device/boards/erbium/erbium.dtb" >> build/erbium-dt.txt
 build/athrill3 -i -c1 -m test/erbium/memory.txt \
-  -d test/erbium/device_config.txt -t20000 build/firmware/erbium-device-test.elf
+  -d build/erbium-dt.txt -t20000 build/firmware/erbium-device-test.elf
 ```
 
 At the initial `[DBG>` prompt, inject a character through Athrill's serial-input
@@ -29,7 +33,7 @@ holds 16 bytes at a time):
 ```sh
 printf 'serial 0 %s\ncont\n' "$(cat test/erbium/input.txt)" |
   build/athrill3 -i -c1 -m test/erbium/memory.txt \
-    -d test/erbium/device_config.txt -t20000 build/firmware/erbium-device-test.elf
+    -d build/erbium-dt.txt -t20000 build/firmware/erbium-device-test.elf
 ```
 
 Expected device output begins:

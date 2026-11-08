@@ -6,7 +6,7 @@
 #include "riscv_decode.h"
 #include "pmp.h"
 #include "intc.h"
-#include "erbium_devices.h"
+#include "device_access.h"
 #include "athrill_idle_spin_halt.h"
 #include <string.h>
 #include <inttypes.h>
