@@ -1,0 +1,4 @@
+# The sources of the Zephyr samples (read by build.sh): the Zephyr revision
+# whose erbium board and SoC the athrill-device Erbium board includes.
+zephyr f3fc249035296b87c75fa808b3abf78829fe9378
+sdk 1.0.1
