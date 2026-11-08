@@ -13,6 +13,24 @@ find_package(Threads REQUIRED)
 set(ATHRILL_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../athrill" CACHE PATH "Athrill core checkout")
 get_filename_component(ATHRILL_SOURCE_DIR "${ATHRILL_SOURCE_DIR}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(ATHRILL_ADDRESS_WIDTH 64 CACHE STRING "Athrill bus address width" FORCE)
+# GDB remote debugging (athrill3 -g<port>): on when the core's GDB RSP server
+# sends a target description and takes 64-bit addresses (toppers/athrill#85,
+# #86) and the host has POSIX sockets.
+set(_riscv_gdb_rsp_api "${ATHRILL_SOURCE_DIR}/src/debugger/rsp/gdb_rsp_target.h")
+set(_riscv_gdb_rsp_default OFF)
+if(EXISTS "${_riscv_gdb_rsp_api}" AND UNIX)
+  file(STRINGS "${_riscv_gdb_rsp_api}" _riscv_gdb_rsp_xml REGEX "ATHRILL_GDB_RSP_TARGET_XML")
+  if(_riscv_gdb_rsp_xml)
+    set(_riscv_gdb_rsp_default ON)
+  endif()
+endif()
+option(ATHRILL_ENABLE_GDB_RSP "Enable GDB remote debugging (athrill3 -g<port>)" ${_riscv_gdb_rsp_default})
+if(ATHRILL_ENABLE_GDB_RSP AND NOT _riscv_gdb_rsp_xml)
+  message(FATAL_ERROR "ATHRILL_ENABLE_GDB_RSP needs an Athrill core whose GDB RSP server sends a "
+    "target description and takes 64-bit addresses (toppers/athrill#85, #86); update the core or set it OFF")
+endif()
+unset(_riscv_gdb_rsp_default)
+unset(_riscv_gdb_rsp_api)
 include("${ATHRILL_SOURCE_DIR}/cmake/AthrillCore.cmake")
 set(ATHRILL_TARGET_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 # The Devicetree runtime and the board models (hakoniwalab/athrill-device) next to this checkout.
@@ -243,6 +261,16 @@ if(BUILD_TESTING)
         --athrill $<TARGET_FILE:athrill3>
         --memory "${CMAKE_CURRENT_SOURCE_DIR}/test/rv64f/memory.txt"
         --elf "${RISCV_FIRMWARE_DIR}/rv64f-selftest-erbium.elf" --clocks 3000000)
+      # GDB remote debugging with 64-bit addresses (test/gdb), when gdb-multiarch is installed.
+      if(ATHRILL_ENABLE_GDB_RSP)
+        find_program(RISCV_TEST_GDB NAMES gdb-multiarch riscv64-unknown-elf-gdb)
+        if(RISCV_TEST_GDB)
+          add_test(NAME gdb-remote-64bit
+            COMMAND sh "${ATHRILL_TARGET_SOURCE_DIR}/../test/gdb/run.sh" $<TARGET_FILE:athrill3>
+                    "${RISCV_TEST_GDB}" "${RISCV_FIRMWARE_DIR}/rv64i-selftest.elf" 23458)
+          set_tests_properties(gdb-remote-64bit PROPERTIES PASS_REGULAR_EXPRESSION "\nPASS" TIMEOUT 60)
+        endif()
+      endif()
       add_test(NAME firmware-erbium-devices COMMAND Python3::Interpreter "${_runner}"
         --athrill $<TARGET_FILE:athrill3>
         --memory "${_erbium}/memory.txt" --device-config "${_erbium_config}"
