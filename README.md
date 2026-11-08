@@ -41,6 +41,12 @@ common Athrill options, memory map, and core parameters.
   per-instruction checks; a store into a block's code
   drops it. Results and clocks are the same as one instruction at a time.
 
+## Debugging with GDB or LLDB
+
+`athrill3 -g<port>` starts a GDB remote server: break in PX4 or NuttX, step,
+read the backtrace, registers (including FPU and machine CSRs) and memory,
+from GDB or LLDB. [docs/debugging.md](docs/debugging.md) has the steps.
+
 ## PX4
 
 [docs/px4-erbium.md](docs/px4-erbium.md) builds the upstream PX4
