@@ -22,7 +22,13 @@
 #define PLIC_SOURCE_MASK 0x7eU
 #define MIP_MEIP 11U
 
-uint8 intc_plic_data[0x200008];
+/*
+ * Defined with an initializer, so it is ordinary zero-filled data and not a
+ * tentative (common) definition: Apple ld gives a 2 MiB common symbol of a
+ * byte type a 32 KiB alignment and then warns that it reduces it to the
+ * segment maximum (toppers/athrill#83).
+ */
+uint8 intc_plic_data[0x200008] = { 0U };
 
 static uint32 plic_pending;
 static uint32 plic_asserted;
