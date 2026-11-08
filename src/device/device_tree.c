@@ -15,6 +15,7 @@
 #include "cpuemu_ops.h"
 #include "std_errno.h"
 #include "target_host.h"
+#include "mpu.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -123,6 +124,24 @@ std_bool riscv_device_tree_build(void)
 	riscv_host_reset_values();
 	if (riscv_host_config_string("DEVICE_CONFIG_DEVICE_TREE", &path) != STD_E_OK) {
 		return FALSE;
+	}
+	/*
+	 * An external device of memory.txt (DEV) cannot run with the Devicetree:
+	 * the core keeps a pointer to its entry of the region table, and every
+	 * model register window reallocates that table. Map the device as a
+	 * Devicetree node instead (the Hakoniwa sensor device:
+	 * hakoniwa,sensor-registers, athrill-device boards/erbium/erbium-hakoniwa.dtb).
+	 */
+	{
+		uint32 i;
+		for (i = 0U; i < mpu_address_map.dynamic_map_num; i++) {
+			if (mpu_address_map.dynamic_map[i].type == DEVICE) {
+				printf("ERROR: memory.txt DEV at 0x%llx cannot be used with DEVICE_CONFIG_DEVICE_TREE; "
+				       "map the device as a Devicetree node (Hakoniwa sensor device: hakoniwa,sensor-registers)\n",
+				       (unsigned long long)mpu_address_map.dynamic_map[i].start);
+				exit(1);
+			}
+		}
 	}
 	plugin_count = collect_plugins(plugins);
 	if (plugin_count < 0) {
