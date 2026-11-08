@@ -18,7 +18,13 @@
 #include "athrill_idle_spin_halt.h"
 #include <stdio.h>
 #include <string.h>
-#include "peripheral/erbium_devices.h"
+#include "intc.h"
+#include "device_access.h"
+#include "device_tree.h"
+
+/* No board in this test: the Devicetree runtime is not built. */
+std_bool riscv_device_tree_build(void) { return FALSE; }
+void riscv_device_tree_tick(DeviceClockType *clock) { (void)clock; }
 
 #define HOST_MEMORY_SIZE 256U
 #include "common/host_memory_stub.h"
@@ -286,11 +292,10 @@ static void check_wfi_and_timer(DeviceClockType *clock)
 	intc_cpu_trigger_interrupt(0, 3);
 	check("an enabled software interrupt releases wfi", !core->is_halt);
 
-	clock->clock = 100;
-	device_supply_clock(clock);
-	erbium_timer_ops.get_data32(NULL, 0, 0x80f40200ULL, &value);
-	/* 100 clocks at 200 MHz are 0.5 us; mtime runs at 2 MHz: 1 tick. */
-	check("mtime after 100 clocks at the default frequencies", value == 1U);
+	/* The machine timer is an athrill-device model now (riscv,machine-timer;
+	 * its test is athrill-device tests/test_riscv_mtimer.c). */
+	(void)clock;
+	(void)value;
 }
 
 /*

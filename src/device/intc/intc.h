@@ -15,5 +15,7 @@ void intc_reset(void);
 void intc_set_local_interrupt(CoreIdType core_id, uint32 cause, std_bool level);
 std_bool intc_take_interrupt(TargetCoreType *core, uint32 *cause);
 void intc_plic_set_source(uint32 source, std_bool level);
+/* The level a device drives on a PLIC source (the Devicetree models' irq_is_active). */
+std_bool intc_plic_source_asserted(uint32 source);
 
 #endif
