@@ -48,20 +48,23 @@ void device_init(CpuType *cpu, DeviceClockType *clock)
 	clock->can_skip_clock = TRUE;
 	clock->is_halt = FALSE;
 	erbium_devices_reset();
-	if (cpuemu_get_devcfg_string("DEVICE_CONFIG_ERBIUM_UART_RX_FILE", &rx_file) == STD_E_OK) {
-		erbium_uart_open_rx_file(rx_file);
-	}
-	else {
-		erbium_uart_open_rx_file(NULL);
-	}
-	/* Listen once; a reset keeps the connection. */
-	if (!erbium_uart_tcp_enabled()
-		&& (cpuemu_get_devcfg_value("DEVICE_CONFIG_ERBIUM_UART_TCP_PORT", &tcp_port) == STD_E_OK)) {
-		(void)erbium_uart_tcp_open(tcp_port);
-	}
 	/* The board's athrill-device models (DEVICE_CONFIG_DEVICE_TREE), if any:
 	 * their registers come before the target's devices at the same address. */
 	(void)riscv_device_tree_build();
+	/* The configuration is looked up as before (its echo stays in the
+	 * console); the target's UART takes the file and the TCP port only when
+	 * no model replaced it (the model has them then). */
+	rx_file = NULL;
+	(void)cpuemu_get_devcfg_string("DEVICE_CONFIG_ERBIUM_UART_RX_FILE", &rx_file);
+	if (!riscv_host_mmio_covers(0x02004000ULL)) {
+		erbium_uart_open_rx_file(rx_file);
+	}
+	/* Listen once; a reset keeps the connection. */
+	if (!erbium_uart_tcp_enabled()
+		&& (cpuemu_get_devcfg_value("DEVICE_CONFIG_ERBIUM_UART_TCP_PORT", &tcp_port) == STD_E_OK)
+		&& !riscv_host_mmio_covers(0x02004000ULL)) {
+		(void)erbium_uart_tcp_open(tcp_port);
+	}
 }
 
 void device_reset(CpuType *cpu, DeviceClockType *clock)
