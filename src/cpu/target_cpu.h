@@ -35,6 +35,12 @@ typedef struct RiscvDecodedInsn {
      */
     uint8 block_length;
     uint32 block_generation;
+#ifdef ATHRILL_ENABLE_JIT
+    /* The JIT code of the block that starts here, valid for these values (cpu_config.c). */
+    const void *jit_code;
+    uint64 jit_generation;
+    uint64 jit_epoch;
+#endif
 } RiscvDecodedInsn;
 
 typedef struct {
