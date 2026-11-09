@@ -111,6 +111,7 @@ set(RISCV_CPU_SOURCES
 
 add_library(athrill_riscv_cpu STATIC
   ${RISCV_CPU_SOURCES}
+  ${ATHRILL_JIT_SOURCES}
   "${ATHRILL_SRC_DIR}/lib/dbg_log.c")
 riscv_target(athrill_riscv_cpu)
 

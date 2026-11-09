@@ -8,6 +8,7 @@
 #include "intc.h"
 #include "device_access.h"
 #include "athrill_idle_spin_halt.h"
+#include <stddef.h>
 #include <string.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -488,6 +489,312 @@ ended:
 	return done;
 }
 
+#ifdef ATHRILL_ENABLE_JIT
+/*
+ * JIT of the straight-line blocks (experiment, DEVICE_CONFIG_RISCV_JIT 1).
+ *
+ * jit_execute_block() gives the same clocks, counters and results as
+ * execute_block(): the same block (build_block()), the same checks after
+ * each instruction, the same counter updates. Only how the instructions run
+ * differs: the integer add/sub/mul/div family and the immediate loads are
+ * native host code; every other instruction calls its execute function from
+ * the block (call-threaded). Rules kept by the translation:
+ *   - (*clock) and pc are up to date before every call and at every exit;
+ *     a native instruction only counts, its pc and clock are written later;
+ *   - after a called instruction that is not the last one, the block ends
+ *     when the pc is off the next entry, on an access fault or when a device
+ *     was accessed (as execute_block() does);
+ *   - the idle-function check runs before the instruction at the idle pc
+ *     (idle_ready() is FALSE at any other pc);
+ *   - x0 stays 0: a native instruction with rd 0 does nothing, a called one
+ *     is followed by x[0] = 0.
+ */
+#include "athrill_jit.h"
+
+typedef struct {
+	uint64 trapped;
+	uint32 word;	/* the 32-bit result of a W instruction */
+	CoreIdType id;
+} RiscvJitCtx;
+
+static int riscv_jit_mode = -1;	/* -1: not read yet, 0: off, 1: on */
+static AthrillJitCache *riscv_jit_cache;
+static uint64 *riscv_jit_clock;
+static uint64 riscv_jit_blocks_run;
+static uint64 riscv_jit_insns_native;
+static uint64 riscv_jit_insns_called;
+static uint64 riscv_jit_translate_failures;
+
+#define RV_X(n) athrill_jit_core((uint32)(offsetof(TargetCoreType, reg.x) + 8U * (uint32)(n)), 8)
+#define RV_X32(n) athrill_jit_core((uint32)(offsetof(TargetCoreType, reg.x) + 8U * (uint32)(n)), 4)
+#define RV_PC athrill_jit_core((uint32)offsetof(TargetCoreType, reg.pc), 8)
+#define RV_FAULT athrill_jit_core((uint32)offsetof(TargetCoreType, access_fault), (uint8)sizeof(std_bool))
+#define RV_WORD athrill_jit_ctx((uint32)offsetof(RiscvJitCtx, word), 4)
+
+static void riscv_jit_report(void)
+{
+	AthrillJitCacheStats st;
+
+	athrill_jit_cache_get_stats(riscv_jit_cache, &st);
+	fprintf(stderr, "INFO: JIT blocks run=%" PRIu64 " compiled=%" PRIu64 " held=%u code=%" PRIu64
+		" bytes stale=%" PRIu64 " flushes=%" PRIu64 " failures=%" PRIu64
+		" translated insns native=%" PRIu64 " called=%" PRIu64 "\n",
+		riscv_jit_blocks_run, st.inserts, st.blocks, st.code_bytes, st.stale, st.flushes,
+		riscv_jit_translate_failures, riscv_jit_insns_native, riscv_jit_insns_called);
+}
+
+static std_bool riscv_jit_enabled(void)
+{
+	uint32 value = 0U;
+
+	if (riscv_jit_mode >= 0) {
+		return riscv_jit_mode == 1;
+	}
+	riscv_jit_mode = 0;
+	if ((cpuemu_get_devcfg_value("DEVICE_CONFIG_RISCV_JIT", &value) == STD_E_OK) && (value == 1U)) {
+		riscv_jit_cache = athrill_jit_cache_create(65536U);
+		if (riscv_jit_cache != NULL) {
+			riscv_jit_mode = 1;
+			fprintf(stderr, "INFO: RISC-V JIT on (experiment)\n");
+			(void)atexit(riscv_jit_report);
+		}
+	}
+	return riscv_jit_mode == 1;
+}
+
+static int riscv_jit_call_insn(void *core_v, void *ctx_v, const void *arg)
+{
+	TargetCoreType *core = (TargetCoreType *)core_v;
+	RiscvJitCtx *ctx = (RiscvJitCtx *)ctx_v;
+	const RiscvDecodedInsn *entry = (const RiscvDecodedInsn *)arg;
+	int retired;
+
+	retired = entry->execute(core, entry);
+	if (core->reg.pc == entry->pc) {
+		athrill_idle_spin_halt_after_execute(ctx->id, entry->pc);
+	}
+	if (retired != RISCV_EXEC_RETIRED) {
+		ctx->trapped++;
+	}
+	core->reg.x[0] = 0;
+	return retired;
+}
+
+static int riscv_jit_call_idle_ready(void *core_v, void *ctx_v, const void *arg)
+{
+	RiscvJitCtx *ctx = (RiscvJitCtx *)ctx_v;
+
+	(void)core_v;
+	(void)arg;
+	return athrill_idle_spin_halt_idle_ready(ctx->id) ? 1 : 0;
+}
+
+/* RISC-V M division rules: x / 0 = all ones, x % 0 = x, MIN / -1 = MIN, MIN % -1 = 0. */
+static void riscv_jit_emit_division(AthrillJitBuilder *b, AthrillJitAluOp op, const RiscvDecodedInsn *e)
+{
+	AthrillJitLabel *by_zero = athrill_jit_label_new(b);
+	AthrillJitLabel *overflow = athrill_jit_label_new(b);
+	AthrillJitLabel *end = athrill_jit_label_new(b);
+	std_bool is_signed = (op == ATHRILL_JIT_DIVS) || (op == ATHRILL_JIT_REMS);
+	std_bool is_div = (op == ATHRILL_JIT_DIVU) || (op == ATHRILL_JIT_DIVS);
+
+	athrill_jit_jump_if(b, ATHRILL_JIT_EQ, RV_X(e->rs2), athrill_jit_imm(0), by_zero);
+	if (is_signed) {
+		AthrillJitLabel *normal = athrill_jit_label_new(b);
+
+		athrill_jit_jump_if(b, ATHRILL_JIT_NE, RV_X(e->rs2), athrill_jit_imm(-1), normal);
+		athrill_jit_jump_if(b, ATHRILL_JIT_EQ, RV_X(e->rs1), athrill_jit_imm((sint64)0x8000000000000000ULL), overflow);
+		athrill_jit_label_place(b, normal);
+	}
+	athrill_jit_alu(b, op, RV_X(e->rd), RV_X(e->rs1), RV_X(e->rs2));
+	athrill_jit_jump(b, end);
+
+	athrill_jit_label_place(b, by_zero);
+	if (is_div) {
+		athrill_jit_mov(b, RV_X(e->rd), athrill_jit_imm(-1));
+	} else {
+		athrill_jit_mov(b, RV_X(e->rd), RV_X(e->rs1));
+	}
+	athrill_jit_jump(b, end);
+
+	athrill_jit_label_place(b, overflow);
+	if (is_div) {
+		athrill_jit_mov(b, RV_X(e->rd), RV_X(e->rs1));	/* MIN */
+	} else {
+		athrill_jit_mov(b, RV_X(e->rd), athrill_jit_imm(0));
+	}
+	athrill_jit_label_place(b, end);
+}
+
+/* Emits e natively; FALSE: not one of the native instructions. */
+static std_bool riscv_jit_emit_native(AthrillJitBuilder *b, const RiscvDecodedInsn *e)
+{
+	RiscvDecodedExecutor x = e->execute;
+	sint64 imm = (sint64)e->immediate;
+
+	if ((x != op_exec_addi) && (x != op_exec_add) && (x != op_exec_sub) && (x != op_exec_mul)
+	    && (x != op_exec_div) && (x != op_exec_divu) && (x != op_exec_rem) && (x != op_exec_remu)
+	    && (x != op_exec_addiw) && (x != op_exec_addw) && (x != op_exec_subw)
+	    && (x != op_exec_li) && (x != op_exec_lui)) {
+		return FALSE;
+	}
+	if (e->rd == 0U) {
+		return TRUE;	/* a write to x0: nothing happens */
+	}
+	if (x == op_exec_addi) {
+		athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_X(e->rd), RV_X(e->rs1), athrill_jit_imm(imm));
+	} else if (x == op_exec_add) {
+		athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_X(e->rd), RV_X(e->rs1), RV_X(e->rs2));
+	} else if (x == op_exec_sub) {
+		athrill_jit_alu(b, ATHRILL_JIT_SUB, RV_X(e->rd), RV_X(e->rs1), RV_X(e->rs2));
+	} else if (x == op_exec_mul) {
+		athrill_jit_alu(b, ATHRILL_JIT_MUL, RV_X(e->rd), RV_X(e->rs1), RV_X(e->rs2));
+	} else if (x == op_exec_div) {
+		riscv_jit_emit_division(b, ATHRILL_JIT_DIVS, e);
+	} else if (x == op_exec_divu) {
+		riscv_jit_emit_division(b, ATHRILL_JIT_DIVU, e);
+	} else if (x == op_exec_rem) {
+		riscv_jit_emit_division(b, ATHRILL_JIT_REMS, e);
+	} else if (x == op_exec_remu) {
+		riscv_jit_emit_division(b, ATHRILL_JIT_REMU, e);
+	} else if (x == op_exec_addiw) {
+		/* RV64 W: the 32-bit result, sign-extended */
+		athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_WORD, RV_X32(e->rs1), athrill_jit_imm(imm));
+		athrill_jit_movs(b, RV_X(e->rd), RV_WORD);
+	} else if (x == op_exec_addw) {
+		athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_WORD, RV_X32(e->rs1), RV_X32(e->rs2));
+		athrill_jit_movs(b, RV_X(e->rd), RV_WORD);
+	} else if (x == op_exec_subw) {
+		athrill_jit_alu(b, ATHRILL_JIT_SUB, RV_WORD, RV_X32(e->rs1), RV_X32(e->rs2));
+		athrill_jit_movs(b, RV_X(e->rd), RV_WORD);
+	} else {
+		/* li, lui: the decoded immediate */
+		athrill_jit_mov(b, RV_X(e->rd), athrill_jit_imm(imm));
+	}
+	return TRUE;
+}
+
+static void riscv_jit_flush_clock(AthrillJitBuilder *b, uint32 *pending)
+{
+	if (*pending == 0U) {
+		return;
+	}
+	athrill_jit_alu(b, ATHRILL_JIT_ADD, athrill_jit_abs(riscv_jit_clock, 8), athrill_jit_abs(riscv_jit_clock, 8),
+			athrill_jit_imm(*pending));
+	*pending = 0U;
+}
+
+static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64 length)
+{
+	AthrillJitBuilder *b = athrill_jit_builder_create();
+	const RiscvDecodedInsn *e = first;
+	AthrillAddrType idle_pc = athrill_idle_spin_halt_idle_pc();
+	uint32 pending = 0U;
+	std_bool last_native = FALSE;
+	uint64 i;
+
+	if (b == NULL) {
+		return NULL;
+	}
+	for (i = 0U; i < length; i++) {
+		std_bool last = (i + 1U == length);
+
+		if ((idle_pc != 0U) && (e->pc == idle_pc)) {
+			riscv_jit_flush_clock(b, &pending);
+			athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)e->pc));
+			athrill_jit_call(b, riscv_jit_call_idle_ready, NULL);
+			athrill_jit_exit_if(b, ATHRILL_JIT_NE, athrill_jit_result(), athrill_jit_imm(0));
+		}
+		athrill_jit_count(b, 1U);
+		pending++;
+		if (riscv_jit_emit_native(b, e)) {
+			riscv_jit_insns_native++;
+			last_native = TRUE;
+		} else {
+			riscv_jit_flush_clock(b, &pending);
+			athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)e->pc));
+			athrill_jit_call(b, riscv_jit_call_insn, e);
+			if (!last) {
+				athrill_jit_exit_if(b, ATHRILL_JIT_NE, RV_PC, athrill_jit_imm((sint64)(e->pc + e->length)));
+				athrill_jit_exit_if(b, ATHRILL_JIT_NE, RV_FAULT, athrill_jit_imm(0));
+				athrill_jit_exit_if(b, ATHRILL_JIT_NE, athrill_jit_abs(&riscv_device_accessed, (uint8)sizeof(std_bool)),
+						    athrill_jit_imm(0));
+			}
+			riscv_jit_insns_called++;
+			last_native = FALSE;
+		}
+		if (!last) {
+			e += e->length >> 1U;
+		}
+	}
+	if (last_native) {
+		riscv_jit_flush_clock(b, &pending);
+		athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)(e->pc + e->length)));
+	}
+	return athrill_jit_builder_finish(b);
+}
+
+/* execute_block() with the block's code from the JIT (same arguments and result). */
+static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint64 budget, uint64 *clock)
+{
+	uint64 pc = core->reg.pc;
+	RiscvDecodePage *page;
+	RiscvDecodedInsn *entry;
+	uint64 length;
+	uint64 generation;
+	const AthrillJitCode *code;
+	AthrillJitCode *fresh;
+	RiscvJitCtx ctx;
+	uint64 done;
+
+	if (riscv_jit_clock == NULL) {
+		riscv_jit_clock = clock;
+	}
+	if (clock != riscv_jit_clock) {
+		return execute_block(core, id, budget, clock);
+	}
+	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
+		return 0U;
+	}
+	page = riscv_decode_page(core, pc);
+	if (page == NULL) {
+		return 0U;
+	}
+	entry = riscv_decode_page_entry(page, pc);
+	if (!decode_cache_hit(core, entry, pc)) {
+		return 0U;
+	}
+	if ((entry->block_length == 0U) || (entry->block_generation != page->generation)) {
+		(void)build_block(core, page, entry);
+	}
+	length = entry->block_length;
+	if ((length == 0U) || (length > budget)) {
+		return 0U;
+	}
+	generation = ((uint64)page->generation << 8) | (uint64)entry->block_length;
+	code = athrill_jit_cache_lookup(riscv_jit_cache, pc, (uint32)core->reg.privilege, generation);
+	if (code == NULL) {
+		fresh = riscv_jit_translate(entry, length);
+		if (fresh == NULL) {
+			riscv_jit_translate_failures++;
+			return execute_block(core, id, budget, clock);
+		}
+		athrill_jit_cache_insert(riscv_jit_cache, pc, (uint32)core->reg.privilege, generation, fresh);
+		code = fresh;
+	}
+	core->access_fault = FALSE;
+	ctx.trapped = 0U;
+	ctx.word = 0U;
+	ctx.id = id;
+	done = athrill_jit_code_run(code, core, &ctx);
+	riscv_jit_blocks_run++;
+	core->internal_cycle += done;
+	core->internal_instret += done - ctx.trapped;
+	virtual_cpu.cores[id].elaps += done;
+	return done;
+}
+#endif /* ATHRILL_ENABLE_JIT */
+
 Std_ReturnType cpu_supply_clocks(CoreIdType core_id, uint64 max_clocks, uint64 *clock, uint64 *executed)
 {
 	TargetCoreType *core = &virtual_cpu.cores[core_id].core;
@@ -509,7 +816,15 @@ Std_ReturnType cpu_supply_clocks(CoreIdType core_id, uint64 max_clocks, uint64 *
 			continue;
 		}
 		if (!riscv_trace_enabled) {
+#ifdef ATHRILL_ENABLE_JIT
+			if (riscv_jit_enabled()) {
+				done = jit_execute_block(core, core_id, max_clocks - n, clock);
+			} else {
+				done = execute_block(core, core_id, max_clocks - n, clock);
+			}
+#else
 			done = execute_block(core, core_id, max_clocks - n, clock);
+#endif
 			if (done != 0U) {
 				n += done;
 				continue;
