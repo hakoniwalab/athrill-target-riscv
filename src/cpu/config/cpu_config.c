@@ -573,6 +573,7 @@ void riscv_jit_code_changed(void)
 }
 #ifdef ATHRILL_JIT_DIFF_TEST
 static uint64 riscv_jit_test_calls;
+static uint64 riscv_jit_test_taken_branches;
 #endif
 
 #define RV_X(n) athrill_jit_core((uint32)(offsetof(TargetCoreType, reg.x) + 8U * (uint32)(n)), 8)
@@ -1053,6 +1054,10 @@ static void riscv_jit_emit_c_paths(AthrillJitBuilder *b, const RiscvJitCPath *c_
 		athrill_jit_label_place(b, c_paths[i].start);
 		if (c_paths[i].taken) {
 			/* a taken branch: the block ends at the target */
+#ifdef ATHRILL_JIT_DIFF_TEST
+			athrill_jit_alu(b, ATHRILL_JIT_ADD, athrill_jit_abs(&riscv_jit_test_taken_branches, 8),
+				athrill_jit_abs(&riscv_jit_test_taken_branches, 8), athrill_jit_imm(1));
+#endif
 			athrill_jit_alu(b, ATHRILL_JIT_ADD, athrill_jit_abs(riscv_jit_clock, 8),
 					athrill_jit_abs(riscv_jit_clock, 8), athrill_jit_imm(c_paths[i].pending));
 			athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)c_paths[i].target));
@@ -1484,12 +1489,16 @@ void riscv_jit_test_set_enabled(std_bool enabled)
 	riscv_jit_code_changed();	/* no chain link carries over between runs */
 }
 
-void riscv_jit_test_get_counters(uint64 *blocks, uint64 *native, uint64 *called, uint64 *runtime_calls)
+void riscv_jit_test_get_counters(uint64 *blocks, uint64 *native, uint64 *called, uint64 *runtime_calls,
+	uint64 *taken_branches, uint32 *links, std_bool *pending_link)
 {
 	*blocks = riscv_jit_blocks_run;
 	*native = riscv_jit_insns_native;
 	*called = riscv_jit_insns_called;
 	*runtime_calls = riscv_jit_test_calls;
+	*taken_branches = riscv_jit_test_taken_branches;
+	*links = athrill_jit_chain_links();
+	*pending_link = riscv_jit_pending_slot != NULL;
 }
 #endif
 #endif /* ATHRILL_ENABLE_JIT */

@@ -27,7 +27,7 @@ static unsigned failures;
 static const char *active_case;
 
 extern void riscv_jit_test_set_enabled(std_bool enabled);
-extern void riscv_jit_test_get_counters(uint64 *, uint64 *, uint64 *, uint64 *);
+extern void riscv_jit_test_get_counters(uint64 *, uint64 *, uint64 *, uint64 *, uint64 *, uint32 *, std_bool *);
 
 std_bool riscv_device_tree_build(void) { return FALSE; }
 void riscv_device_tree_tick(DeviceClockType *clock) { (void)clock; }
@@ -45,7 +45,7 @@ Std_ReturnType cpuemu_get_devcfg_value(const char *key, uint32 *value)
 		return STD_E_OK;
 	}
 	if (strcmp(key, "DEVICE_CONFIG_SPIN_HALT") == 0) {
-		*value = 0U;
+		*value = 1U;
 		return STD_E_OK;
 	}
 	return STD_E_INVALID;
@@ -125,12 +125,25 @@ static uint32 s_insn(sint32 imm, uint32 rs2, uint32 rs1, uint32 f3)
 	return ((u & 0xfe0U) << 20) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | ((u & 31U) << 7) | 0x23U;
 }
 static uint32 u_insn(uint32 imm, uint32 rd, uint32 op) { return (imm & 0xfffff000U) | (rd << 7) | op; }
+static uint32 b_insn(sint32 imm, uint32 rs2, uint32 rs1, uint32 f3)
+{
+	uint32 u = (uint32)imm & 0x1fffU;
+	return ((u & 0x1000U) << 19) | ((u & 0x7e0U) << 20) | (rs2 << 20) |
+		(rs1 << 15) | (f3 << 12) | ((u & 0x1eU) << 7) | ((u & 0x800U) >> 4) | 0x63U;
+}
+static uint32 j_insn(sint32 imm, uint32 rd)
+{
+	uint32 u = (uint32)imm & 0x1fffffU;
+	return ((u & 0x100000U) << 11) | (u & 0xff000U) | ((u & 0x800U) << 9) |
+		((u & 0x7feU) << 20) | (rd << 7) | 0x6fU;
+}
 
 enum Path { PATH_ANY, PATH_NATIVE, PATH_C };
 typedef struct {
 	const char *name;
 	uint64 pc;
 	uint32 insn[MAX_INSNS];
+	uint8 length[MAX_INSNS];
 	uint32 count;
 	uint64 budget;
 	uint64 x[32];
@@ -141,6 +154,8 @@ typedef struct {
 	enum Path path;
 	uint32 min_native;
 	uint32 expected_done;
+	sint8 expected_taken; /* -1: do not check, 0/1: native taken-branch count */
+	sint8 expected_pending; /* -1: do not check, 0/1: unlinked chain exit */
 	uint8 scenario;
 } Plan;
 
@@ -149,7 +164,9 @@ typedef struct {
 	uint64 cycle, instret, clock, done, elaps, decode_hash;
 	std_bool access_fault, halt;
 	uint8 ram[RAM_SIZE];
-	uint64 blocks, native, called, runtime_calls;
+	uint64 blocks, native, called, runtime_calls, taken_branches;
+	uint32 links;
+	std_bool pending_link;
 } Result;
 
 static uint64 hash_u64(uint64 h, uint64 v)
@@ -183,12 +200,27 @@ static uint64 decode_hash(TargetCoreType *core)
 
 static void put32(uint64 address, uint32 word) { memcpy(&memory[address], &word, 4U); }
 
-static void decode_one(TargetCoreType *core, uint64 pc)
+static uint8 plan_length(const Plan *p, uint32 i) { return p->length[i] != 0U ? p->length[i] : 4U; }
+
+static uint64 plan_pc(const Plan *p, uint32 index)
+{
+	uint32 i;
+	uint64 pc = p->pc;
+	for (i = 0U; i < index; i++) pc += plan_length(p, i);
+	return pc;
+}
+
+static void decode_one(TargetCoreType *core, uint64 pc, uint8 length)
 {
 	RiscvDecodedInsn *e = riscv_decode_slot(core, pc);
-	uint32 raw;
-	memcpy(&raw, &memory[pc], 4U);
-	if ((e == NULL) || !riscv_decode_fill(pc, raw, 4U, e)) {
+	uint32 raw = 0U, expanded;
+	memcpy(&raw, &memory[pc], length);
+	expanded = raw;
+	if ((length == 2U) && !riscv_expand_compressed((uint16)raw, &expanded)) {
+		fprintf(stderr, "FAIL %s: cannot expand compressed %04x at 0x%" PRIx64 "\n", active_case, raw, pc);
+		exit(2);
+	}
+	if ((e == NULL) || !riscv_decode_fill(pc, expanded, length, e)) {
 		fprintf(stderr, "FAIL %s: cannot decode %08x at 0x%" PRIx64 "\n", active_case, raw, pc);
 		exit(2);
 	}
@@ -197,7 +229,7 @@ static void decode_one(TargetCoreType *core, uint64 pc)
 static void decode_plan(TargetCoreType *core, const Plan *p)
 {
 	uint32 i;
-	for (i = 0; i < p->count; i++) decode_one(core, p->pc + 4U * i);
+	for (i = 0; i < p->count; i++) decode_one(core, plan_pc(p, i), plan_length(p, i));
 }
 
 static void init_core(TargetCoreType *core, const Plan *p)
@@ -205,7 +237,7 @@ static void init_core(TargetCoreType *core, const Plan *p)
 	uint32 i;
 
 	memcpy(memory, initial_memory, RAM_SIZE);
-	for (i = 0U; i < p->count; i++) put32(p->pc + 4U * i, p->insn[i]);
+	for (i = 0U; i < p->count; i++) memcpy(&memory[plan_pc(p, i)], &p->insn[i], plan_length(p, i));
 	if (p->scenario == 2U) put32(OTHER_CODE, i_insn(1, 5, 0, 5, 0x13U));
 	cpu_reset(0);
 	virtual_cpu.cores[0].elaps = 0U;
@@ -225,22 +257,24 @@ static void init_core(TargetCoreType *core, const Plan *p)
 	core->memory_window.data = memory;
 	core->memory_window.pmp_valid = FALSE;
 	decode_plan(core, p);
-	if (p->scenario == 2U) decode_one(core, OTHER_CODE);
+	if (p->scenario == 2U) decode_one(core, OTHER_CODE, 4U);
 }
 
 static Result run(const Plan *p, std_bool jit)
 {
 	TargetCoreType *core = &virtual_cpu.cores[0].core;
 	Result r;
-	uint64 b0, n0, c0, rc0;
-	uint64 b1, n1, c1, rc1;
+	uint64 b0, n0, c0, rc0, t0;
+	uint64 b1, n1, c1, rc1, t1;
+	uint32 links;
+	std_bool pending;
 	uint64 done = 0U, extra = 0U;
 
 	active_case = p->name;
 	init_core(core, p);
 	core = &virtual_cpu.cores[0].core;
 	riscv_jit_test_set_enabled(jit);
-	riscv_jit_test_get_counters(&b0, &n0, &c0, &rc0);
+	riscv_jit_test_get_counters(&b0, &n0, &c0, &rc0, &t0, &links, &pending);
 	test_clock = 7U;
 	riscv_device_accessed = FALSE;
 	(void)cpu_supply_clocks(0, p->budget, &test_clock, &done);
@@ -263,13 +297,15 @@ static Result run(const Plan *p, std_bool jit)
 		(void)cpu_supply_clocks(0, p->budget, &test_clock, &extra);
 		done += extra;
 	}
-	riscv_jit_test_get_counters(&b1, &n1, &c1, &rc1);
+	riscv_jit_test_get_counters(&b1, &n1, &c1, &rc1, &t1, &links, &pending);
 	memset(&r, 0, sizeof(r));
 	r.reg = core->reg; r.cycle = core->internal_cycle; r.instret = core->internal_instret;
 	r.clock = test_clock; r.done = done; r.elaps = virtual_cpu.cores[0].elaps;
 	r.access_fault = core->access_fault; r.halt = core->is_halt;
 	r.decode_hash = decode_hash(core); memcpy(r.ram, memory, RAM_SIZE);
 	r.blocks = b1 - b0; r.native = n1 - n0; r.called = c1 - c0; r.runtime_calls = rc1 - rc0;
+	r.taken_branches = t1 - t0;
+	r.links = links; r.pending_link = pending;
 	return r;
 }
 
@@ -277,6 +313,84 @@ static void fail_field(const char *name, const char *field)
 {
 	fprintf(stderr, "FAIL %s: interpreter/JIT differ in %s\n", name, field);
 	failures++;
+}
+
+static void capture(Result *r, TargetCoreType *core, uint64 done,
+	uint64 b0, uint64 n0, uint64 c0, uint64 rc0, uint64 t0)
+{
+	uint64 b1, n1, c1, rc1, t1;
+	uint32 links;
+	std_bool pending;
+
+	memset(r, 0, sizeof(*r));
+	riscv_jit_test_get_counters(&b1, &n1, &c1, &rc1, &t1, &links, &pending);
+	r->reg = core->reg; r->cycle = core->internal_cycle; r->instret = core->internal_instret;
+	r->clock = test_clock; r->done = done; r->elaps = virtual_cpu.cores[0].elaps;
+	r->access_fault = core->access_fault; r->halt = core->is_halt; r->decode_hash = decode_hash(core);
+	memcpy(r->ram, memory, RAM_SIZE);
+	r->blocks = b1 - b0; r->native = n1 - n0; r->called = c1 - c0;
+	r->runtime_calls = rc1 - rc0; r->taken_branches = t1 - t0;
+	r->links = links; r->pending_link = pending;
+}
+
+static void compare_arch(const char *name, const Result *a, const Result *b)
+{
+	if (memcmp(&a->reg, &b->reg, sizeof(a->reg)) != 0) fail_field(name, "core->reg");
+	if (a->cycle != b->cycle) fail_field(name, "internal_cycle");
+	if (a->instret != b->instret) fail_field(name, "internal_instret");
+	if (a->clock != b->clock) fail_field(name, "clock");
+	if (a->done != b->done) fail_field(name, "returned count");
+	if (a->access_fault != b->access_fault) fail_field(name, "access_fault");
+	if (a->halt != b->halt) fail_field(name, "halt state");
+	if (a->elaps != b->elaps) fail_field(name, "elapsed clocks");
+	if (memcmp(a->ram, b->ram, RAM_SIZE) != 0) fail_field(name, "guest memory");
+	if (a->decode_hash != b->decode_hash) fail_field(name, "decode cache");
+}
+
+static void compare_arch_without_decode_cache(const char *name, const Result *a, const Result *b)
+{
+	Result copy = *b;
+	copy.decode_hash = a->decode_hash;
+	compare_arch(name, a, &copy);
+}
+
+#define MULTI_STEPS 24U
+typedef struct {
+	uint64 budget;
+	std_bool set_pc;
+	uint64 pc;
+} SupplyStep;
+
+static void run_supplies(const Plan *p, const SupplyStep *steps, uint32 count, std_bool jit, Result *out)
+{
+	TargetCoreType *core = &virtual_cpu.cores[0].core;
+	uint32 i;
+
+	active_case = p->name;
+	init_core(core, p);
+	core = &virtual_cpu.cores[0].core;
+	riscv_jit_test_set_enabled(jit);
+	test_clock = 7U;
+	riscv_device_accessed = FALSE;
+	for (i = 0U; i < count; i++) {
+		uint64 b0, n0, c0, rc0, t0, done = 0U;
+		uint32 links;
+		std_bool pending;
+		if (steps[i].set_pc) core->reg.pc = steps[i].pc;
+		riscv_jit_test_get_counters(&b0, &n0, &c0, &rc0, &t0, &links, &pending);
+		(void)cpu_supply_clocks(0, steps[i].budget, &test_clock, &done);
+		capture(&out[i], core, done, b0, n0, c0, rc0, t0);
+	}
+}
+
+static void compare_supplies(const char *base, const Result *a, const Result *b, uint32 count)
+{
+	uint32 i;
+	char name[128];
+	for (i = 0U; i < count; i++) {
+		snprintf(name, sizeof(name), "%s/supply-%u", base, i);
+		compare_arch(name, &a[i], &b[i]);
+	}
 }
 
 static void run_pair(const Plan *p)
@@ -299,9 +413,14 @@ static void run_pair(const Plan *p)
 	if ((p->path == PATH_NATIVE) && ((b.native < p->min_native) || (b.runtime_calls != 0U)))
 		fail_field(p->name, "native-path proof");
 	if ((p->path == PATH_C) && (b.runtime_calls == 0U)) fail_field(p->name, "C-path proof");
+	if ((p->expected_taken >= 0) && (b.taken_branches != (uint64)p->expected_taken))
+		fail_field(p->name, "taken-branch counter");
+	if ((p->expected_pending >= 0) && (b.pending_link != (std_bool)p->expected_pending))
+		fail_field(p->name, "chain-exit counter");
 	if (failures != before) {
 		fprintf(stderr, "  JIT counters blocks=%" PRIu64 " native=%" PRIu64 " called=%" PRIu64
-			" runtime-calls=%" PRIu64 "\n", b.blocks, b.native, b.called, b.runtime_calls);
+			" runtime-calls=%" PRIu64 " taken-branches=%" PRIu64 "\n",
+			b.blocks, b.native, b.called, b.runtime_calls, b.taken_branches);
 	}
 }
 
@@ -312,6 +431,8 @@ static Plan basic(const char *name, uint32 instruction, uint64 a, uint64 b, uint
 	p.name = name; p.pc = CODE; p.insn[0] = instruction; p.insn[1] = i_insn(1, 31, 0, 31, 0x13U);
 	p.count = 2U; p.budget = 2U; p.x[5] = a; p.x[7] = b; p.x[31] = 9U;
 	p.privilege = RISCV_PRIV_M; p.path = path; p.min_native = 2U; p.expected_done = 2U;
+	p.expected_taken = -1;
+	p.expected_pending = -1;
 	put32(CODE, p.insn[0]); put32(CODE + 4U, p.insn[1]);
 	return p;
 }
@@ -408,6 +529,239 @@ static void shift_logic_cases(void)
 	}
 }
 
+static void branch_last_case(const char *name, uint32 f3, uint32 rs1, uint32 rs2,
+	uint64 a, uint64 b, sint32 immediate, std_bool taken, enum Path path)
+{
+	Plan p = basic(name, b_insn(immediate, rs2, rs1, f3), a, b, 0U, path);
+	p.count = 1U; p.budget = 1U; p.min_native = path == PATH_NATIVE ? 1U : 0U;
+	p.expected_done = 1U; p.expected_taken = path == PATH_NATIVE ? (sint8)taken : -1;
+	p.x[rs1] = a; p.x[rs2] = b;
+	run_pair(&p);
+}
+
+static void branch_cases(void)
+{
+	struct Branch { const char *name; uint32 f3; uint64 ta, tb, fa, fb; } branches[] = {
+		{"beq", 0U, 0x8000000000000000ULL, 0x8000000000000000ULL, 0U, UINT64_MAX},
+		{"bne", 1U, 0U, UINT64_MAX, 0x7fffffffffffffffULL, 0x7fffffffffffffffULL},
+		{"blt", 4U, 0x8000000000000000ULL, 0x7fffffffffffffffULL, 0x7fffffffffffffffULL, 0x8000000000000000ULL},
+		{"bge", 5U, 0x7fffffffffffffffULL, 0x8000000000000000ULL, 0x8000000000000000ULL, 0x7fffffffffffffffULL},
+		{"bltu", 6U, 0U, UINT64_MAX, UINT64_MAX, 0U},
+		{"bgeu", 7U, UINT64_MAX, 0U, 0U, UINT64_MAX}
+	};
+	uint32 i;
+	for (i = 0U; i < sizeof(branches) / sizeof(branches[0]); i++) {
+		char name[80];
+		Plan p;
+		snprintf(name, sizeof(name), "branch/%s/taken-middle-boundary", branches[i].name);
+		p = basic(name, i_insn(1, 8, 0, 8, 0x13U), 0U, 0U, 8U, PATH_NATIVE);
+		p.insn[1] = b_insn(8, 7U, 5U, branches[i].f3);
+		p.insn[2] = i_insn(1, 9, 0, 9, 0x13U); /* skipped only when the branch is taken */
+		p.insn[3] = j_insn(-12, 0U);
+		p.count = 4U; p.budget = 4U; p.min_native = 4U; p.expected_done = 4U;
+		p.expected_taken = 1; p.x[5] = branches[i].ta; p.x[7] = branches[i].tb;
+		run_pair(&p);
+
+		snprintf(name, sizeof(name), "branch/%s/not-taken-middle-boundary", branches[i].name);
+		p.name = name; p.expected_taken = 0; p.x[5] = branches[i].fa; p.x[7] = branches[i].fb;
+		run_pair(&p);
+
+		snprintf(name, sizeof(name), "branch/%s/last-rs1-equals-rs2", branches[i].name);
+		branch_last_case(name, branches[i].f3, 5U, 5U, UINT64_MAX, UINT64_MAX, 8,
+			(branches[i].f3 == 0U) || (branches[i].f3 == 5U) || (branches[i].f3 == 7U), PATH_NATIVE);
+		snprintf(name, sizeof(name), "branch/%s/last-x0-operands", branches[i].name);
+		branch_last_case(name, branches[i].f3, 0U, 0U, 0U, 0U, 8,
+			(branches[i].f3 == 0U) || (branches[i].f3 == 5U) || (branches[i].f3 == 7U), PATH_NATIVE);
+	}
+	branch_last_case("branch/beq/taken-target-next", 0U, 5U, 7U, 42U, 42U, 4, TRUE, PATH_NATIVE);
+	branch_last_case("branch/beq/to-self-c-path", 0U, 5U, 7U, 1U, 1U, 0, TRUE, PATH_C);
+	{
+		Plan p = basic("branch/beq/idle-target-not-chained", b_insn((sint32)(IDLE_PC - CODE), 7U, 5U, 0U),
+			9U, 9U, 0U, PATH_NATIVE);
+		p.count = 1U; p.budget = 1U; p.min_native = 1U; p.expected_done = 1U;
+		p.expected_taken = 1; p.expected_pending = 0;
+		run_pair(&p);
+	}
+}
+
+static void jump_case(const char *name, uint32 instruction, uint32 rd, uint32 rs1,
+	uint64 rs1_value, enum Path path)
+{
+	Plan p = basic(name, instruction, 0U, 0U, rd, path);
+	p.count = 1U; p.budget = 1U; p.min_native = path == PATH_NATIVE ? 1U : 0U;
+	p.expected_done = 1U; p.x[rs1] = rs1_value;
+	run_pair(&p);
+}
+
+static void jump_cases(void)
+{
+	Plan p;
+	jump_case("jump/jal/rd-x0", j_insn(8, 0U), 0U, 5U, 0U, PATH_NATIVE);
+	jump_case("jump/jal/rd-ra", j_insn(8, 1U), 1U, 5U, 0U, PATH_NATIVE);
+	jump_case("jump/jal/to-self-c-path-spin-halt", j_insn(0, 0U), 0U, 5U, 0U, PATH_C);
+	jump_case("jump/jalr/rd-x0", i_insn(0, 5U, 0U, 0U, 0x67U), 0U, 5U, CODE + 32U, PATH_NATIVE);
+	jump_case("jump/jalr/rd-ra", i_insn(0, 5U, 0U, 1U, 0x67U), 1U, 5U, CODE + 32U, PATH_NATIVE);
+	jump_case("jump/jalr/rd-equals-rs1-old-target", i_insn(0, 5U, 0U, 5U, 0x67U), 5U, 5U,
+		CODE + 32U, PATH_NATIVE);
+	jump_case("jump/jalr/odd-target-bit-zero-cleared", i_insn(0, 5U, 0U, 1U, 0x67U), 1U, 5U,
+		CODE + 33U, PATH_NATIVE);
+	jump_case("jump/jalr/to-self-c-path", i_insn(0, 5U, 0U, 0U, 0x67U), 0U, 5U, CODE, PATH_C);
+
+	p = basic("jump/jal/idle-target-not-chained", j_insn((sint32)(IDLE_PC - CODE), 0U), 0U, 0U, 0U, PATH_NATIVE);
+	p.count = 1U; p.budget = 1U; p.min_native = 1U; p.expected_done = 1U; p.expected_pending = 0;
+	run_pair(&p);
+
+	p = basic("jump/compressed-c.j/length-two", 0xa009U, 0U, 0U, 0U, PATH_NATIVE); /* c.j +2 */
+	p.count = 1U; p.length[0] = 2U; p.budget = 1U; p.min_native = 1U; p.expected_done = 1U;
+	run_pair(&p);
+	p = basic("jump/compressed-c.jr/length-two", 0x8282U, 0U, 0U, 0U, PATH_NATIVE); /* c.jr x5 */
+	p.count = 1U; p.length[0] = 2U; p.budget = 1U; p.min_native = 1U; p.expected_done = 1U; p.x[5] = CODE + 32U;
+	run_pair(&p);
+	p = basic("jump/compressed-c.jalr/length-two", 0x9282U, 0U, 0U, 0U, PATH_NATIVE); /* c.jalr x5 */
+	p.count = 1U; p.length[0] = 2U; p.budget = 1U; p.min_native = 1U; p.expected_done = 1U; p.x[5] = CODE + 32U;
+	run_pair(&p);
+	p = basic("jump/compressed-c.j/to-self-c-path-spin-halt", 0xa001U, 0U, 0U, 0U, PATH_C); /* c.j 0 */
+	p.count = 1U; p.length[0] = 2U; p.budget = 1U; p.min_native = 0U; p.expected_done = 1U;
+	run_pair(&p);
+}
+
+static Plan three_block_plan(const char *name, std_bool loop)
+{
+	Plan p = basic(name, i_insn(1, 5U, 0U, 5U, 0x13U), 0U, 0U, 5U, PATH_NATIVE);
+	p.insn[1] = j_insn(4, 0U);
+	p.insn[2] = i_insn(1, 6U, 0U, 6U, 0x13U);
+	p.insn[3] = j_insn(4, 0U);
+	p.insn[4] = i_insn(1, 7U, 0U, 7U, 0x13U);
+	p.insn[5] = j_insn(loop ? -20 : 4, 0U);
+	p.count = 6U; p.budget = 2U; p.min_native = 2U; p.expected_done = 2U;
+	return p;
+}
+
+static void chaining_cases(void)
+{
+	static Result interp[MULTI_STEPS], jit[MULTI_STEPS];
+	unsigned before = failures;
+	Plan p = three_block_plan("chaining/budget-boundaries", FALSE);
+	SupplyStep boundaries[] = {
+		{2U,FALSE,0U}, {2U,FALSE,0U}, {2U,FALSE,0U}, /* first pass compiles all blocks */
+		{2U,TRUE,CODE}, {2U,FALSE,0U}, {2U,FALSE,0U}, /* second pass links B0 -> B1 -> B2 */
+		{1U,TRUE,CODE}, {2U,TRUE,CODE}, {3U,TRUE,CODE},
+		{4U,TRUE,CODE}, {5U,TRUE,CODE}, {6U,TRUE,CODE}
+	};
+	uint32 n = (uint32)(sizeof(boundaries) / sizeof(boundaries[0]));
+
+	run_supplies(&p, boundaries, n, FALSE, interp);
+	run_supplies(&p, boundaries, n, TRUE, jit);
+	compare_supplies(p.name, interp, jit, n);
+	if (jit[5].links < 2U) fail_field(p.name, "link-count proof");
+	if ((jit[9].blocks != 1U) || (jit[9].done != 4U)) fail_field(p.name, "two-block chained-run proof");
+	if ((jit[11].blocks != 1U) || (jit[11].done != 6U)) fail_field(p.name, "three-block chained-run proof");
+	if (failures != before) return;
+
+	p = three_block_plan("chaining/three-block-loop", TRUE);
+	{
+		SupplyStep loop_steps[] = {
+			{2U,FALSE,0U}, {2U,FALSE,0U}, {2U,FALSE,0U}, {2U,FALSE,0U},
+			{2U,FALSE,0U}, {2U,FALSE,0U},
+			{18U,FALSE,0U}, {18U,FALSE,0U}, {18U,FALSE,0U}, {18U,FALSE,0U},
+			{7U,FALSE,0U}
+		};
+		n = (uint32)(sizeof(loop_steps) / sizeof(loop_steps[0]));
+		run_supplies(&p, loop_steps, n, FALSE, interp);
+		run_supplies(&p, loop_steps, n, TRUE, jit);
+		compare_supplies(p.name, interp, jit, n);
+		if (jit[5].links < 3U) fail_field(p.name, "loop-link-count proof");
+		if ((jit[6].blocks != 1U) || (jit[6].done != 18U)) fail_field(p.name, "loop-chain-use proof");
+	}
+}
+
+static void one_supply(TargetCoreType *core, uint64 budget, Result *out)
+{
+	uint64 b0, n0, c0, rc0, t0, done = 0U;
+	uint32 links;
+	std_bool pending;
+	riscv_jit_test_get_counters(&b0, &n0, &c0, &rc0, &t0, &links, &pending);
+	(void)cpu_supply_clocks(0, budget, &test_clock, &done);
+	capture(out, core, done, b0, n0, c0, rc0, t0);
+}
+
+static Plan two_block_loop(const char *name)
+{
+	Plan p = basic(name, i_insn(1, 5U, 0U, 5U, 0x13U), 0U, 0U, 5U, PATH_NATIVE);
+	p.insn[1] = j_insn(4, 0U);
+	p.insn[2] = i_insn(1, 6U, 0U, 6U, 0x13U);
+	p.insn[3] = j_insn(-12, 0U);
+	p.count = 4U; p.budget = 2U; p.min_native = 2U; p.expected_done = 2U;
+	return p;
+}
+
+static void run_store_link_drop(std_bool jit_enabled, Result *out)
+{
+	Plan p = two_block_loop("link-drop/store-into-destination-code");
+	TargetCoreType *core;
+	uint32 i;
+	p.insn[0] = s_insn(0, 11U, 10U, 2U);
+	p.x[10] = DATA; p.x[11] = 0x11223344U;
+	active_case = p.name; init_core(&virtual_cpu.cores[0].core, &p);
+	core = &virtual_cpu.cores[0].core; riscv_jit_test_set_enabled(jit_enabled); test_clock = 7U;
+	for (i = 0U; i < 4U; i++) one_supply(core, 2U, &out[i]);
+	core->reg.pc = CODE; core->reg.x[10] = CODE + 8U;
+	core->reg.x[11] = i_insn(16, 5U, 0U, 5U, 0x13U);
+	one_supply(core, 4U, &out[4]);
+}
+
+static void run_pmp_link_drop(std_bool jit_enabled, Result *out)
+{
+	Plan p = two_block_loop("link-drop/pmp-change");
+	TargetCoreType *core;
+	uint32 i;
+	active_case = p.name; init_core(&virtual_cpu.cores[0].core, &p);
+	core = &virtual_cpu.cores[0].core; riscv_jit_test_set_enabled(jit_enabled); test_clock = 7U;
+	for (i = 0U; i < 4U; i++) one_supply(core, 2U, &out[i]);
+	core->pmp_epoch++;
+	core->reg.pc = CODE;
+	one_supply(core, 2U, &out[4]);
+}
+
+static void run_privilege_link_drop(std_bool jit_enabled, Result *out)
+{
+	Plan p = two_block_loop("link-drop/privilege-change-through-mret");
+	TargetCoreType *core;
+	uint32 i;
+	p.insn[4] = 0x30200073U; /* mret */
+	p.count = 5U;
+	p.pmpcfg = 0x9fU; p.pmpaddr = (RAM_SIZE >> 3) - 1U; p.pmp_epoch = 41U;
+	active_case = p.name; init_core(&virtual_cpu.cores[0].core, &p);
+	core = &virtual_cpu.cores[0].core; riscv_jit_test_set_enabled(jit_enabled); test_clock = 7U;
+	for (i = 0U; i < 4U; i++) one_supply(core, 2U, &out[i]);
+	core->reg.pc = CODE + 16U; core->reg.csr.mepc = CODE;
+	core->reg.csr.mstatus &= ~(3ULL << 11U); /* mret to U mode */
+	one_supply(core, 1U, &out[4]);
+	one_supply(core, 1U, &out[5]);
+}
+
+static void link_drop_cases(void)
+{
+	static Result interp[6], jit[6];
+	uint32 i;
+	char name[128];
+
+	run_store_link_drop(FALSE, interp); run_store_link_drop(TRUE, jit);
+	for (i = 0U; i < 5U; i++) { snprintf(name, sizeof(name), "link-drop/store-into-destination-code/supply-%u", i); compare_arch(name, &interp[i], &jit[i]); }
+	if (jit[3].links < 2U) fail_field("link-drop/store-into-destination-code", "precondition links");
+	if (jit[4].links != 0U) fail_field("link-drop/store-into-destination-code", "links dropped");
+
+	run_pmp_link_drop(FALSE, interp); run_pmp_link_drop(TRUE, jit);
+	for (i = 0U; i < 5U; i++) { snprintf(name, sizeof(name), "link-drop/pmp-change/supply-%u", i); compare_arch(name, &interp[i], &jit[i]); }
+	if (jit[3].links < 2U) fail_field("link-drop/pmp-change", "precondition links");
+	if (jit[4].links != 0U) fail_field("link-drop/pmp-change", "links dropped");
+
+	run_privilege_link_drop(FALSE, interp); run_privilege_link_drop(TRUE, jit);
+	for (i = 0U; i < 6U; i++) { snprintf(name, sizeof(name), "link-drop/privilege-change-through-mret/supply-%u", i); compare_arch(name, &interp[i], &jit[i]); }
+	if (jit[3].links < 2U) fail_field("link-drop/privilege-change-through-mret", "precondition links");
+	if (jit[5].links != 0U) fail_field("link-drop/privilege-change-through-mret", "links dropped");
+}
+
 static void memory_case(const char *name, uint32 instruction, uint64 address, uint64 value, enum Path path, uint8 scenario)
 {
 	Plan p = basic(name, instruction, 0, 0, 6, path);
@@ -469,13 +823,21 @@ static uint32 rng_state=RANDOM_SEED;
 static uint32 random32(void){rng_state^=rng_state<<13;rng_state^=rng_state>>17;rng_state^=rng_state<<5;return rng_state;}
 static void random_cases(void)
 {
-	uint32 block,i; char name[64];
-	for(block=0;block<2000U;block++){
-		Plan p; memset(&p,0,sizeof(p));snprintf(name,sizeof(name),"random/seed-%08x/block-%u",RANDOM_SEED,block);p.name=name;p.pc=CODE;p.count=8;p.budget=8;p.privilege=RISCV_PRIV_M;p.path=PATH_NATIVE;p.min_native=8;p.expected_done=8;
+	static Result interp[10], jit[10];
+	uint32 program,i; char name[80];
+	for(program=0;program<1000U;program++){
+		Plan p; SupplyStep steps[10]; uint32 k; unsigned before = failures;
+		memset(&p,0,sizeof(p));snprintf(name,sizeof(name),"random/seed-%08x/program-%u",RANDOM_SEED,program);p.name=name;p.pc=CODE;p.count=8;p.budget=8;p.privilege=RISCV_PRIV_M;p.path=PATH_NATIVE;p.min_native=1;p.expected_done=8;p.expected_taken=-1;p.expected_pending=-1;
 		p.x[5]=((uint64)random32()<<32)|random32();p.x[6]=((uint64)random32()<<32)|random32();p.x[7]=((uint64)random32()<<32)|random32();p.x[8]=((uint64)random32()<<32)|random32();p.x[9]=((uint64)random32()<<32)|random32();p.x[10]=DATA+256;
 		for(i=0;i<7;i++){
 			uint32 q=random32(),rd=5U+(q%5U),rs1=5U+((q>>3)%5U),rs2=5U+((q>>6)%5U);
-			switch((q>>9)%12U){
+			if (i == 2U) {
+				static const uint8 f3[] = {0U,1U,4U,5U,6U,7U};
+				uint32 target = i + 1U + (random32() % (7U - i));
+				p.insn[i] = b_insn((sint32)(4U * (target - i)), rs2, rs1, f3[(q >> 9) % 6U]);
+				continue;
+			}
+			switch((q>>9)%16U){
 			case 0:p.insn[i]=r_insn(0,rs2,rs1,0,rd,0x33);break;
 			case 1:p.insn[i]=r_insn(0x20,rs2,rs1,0,rd,0x33);break;
 			case 2:p.insn[i]=r_insn(1,rs2,rs1,0,rd,0x33);break;
@@ -487,12 +849,32 @@ static void random_cases(void)
 			case 8:p.insn[i]=i_insn((sint32)(q&63U),10,3,rd,0x03);break;
 			case 9:p.insn[i]=s_insn((sint32)(q&63U),rs2,10,3);break;
 			case 10:p.insn[i]=i_insn((sint32)(q&31U),rs1,1,rd,0x1b);break;
-			default:p.insn[i]=i_insn((sint32)(q&0x7ffU),rs1,0,rd,0x13);break;
+			case 11:p.insn[i]=i_insn((sint32)(q&0x7ffU),rs1,0,rd,0x13);break;
+			default:{
+				static const uint8 f3[] = {0U,1U,4U,5U,6U,7U};
+				uint32 target = i + 1U + (random32() % (7U - i));
+				p.insn[i]=b_insn((sint32)(4U*(target-i)),rs2,rs1,f3[((q>>9)-12U)%6U]);
+				break;
 			}
-			put32(CODE+4U*i,p.insn[i]);
+			}
 		}
-		p.insn[7]=i_insn(1,31,0,31,0x13);put32(CODE+28,p.insn[7]);run_pair(&p);
-		if(failures){fprintf(stderr,"random seed: 0x%08x\n",RANDOM_SEED);return;}
+		p.insn[7]=j_insn(-28,0U);
+		steps[0].budget=8U;steps[1].budget=8U;
+		for(k=0U;k<10U;k++){steps[k].set_pc=FALSE;steps[k].pc=0U;if(k>=2U)steps[k].budget=1U+(random32()%16U);}
+		run_supplies(&p,steps,10U,FALSE,interp);run_supplies(&p,steps,10U,TRUE,jit);
+		/* Chaining can build target-entry block metadata earlier; it is non-architectural. */
+		for(k=0U;k<10U;k++){
+			char supply_name[128];
+			snprintf(supply_name,sizeof(supply_name),"%s/supply-%u",name,k);
+			compare_arch_without_decode_cache(supply_name,&interp[k],&jit[k]);
+		}
+		{
+			uint64 blocks=0U,native=0U;
+			for(k=0U;k<10U;k++){blocks+=jit[k].blocks;native+=jit[k].native;}
+			if(blocks==0U)fail_field(name,"random JIT block proof");
+			if(native==0U)fail_field(name,"random native-path proof");
+		}
+		if(failures!=before){fprintf(stderr,"random mismatch seed=0x%08x program=%u\n",RANDOM_SEED,program);return;}
 	}
 }
 
@@ -502,8 +884,13 @@ int main(void)
 	for(i=0;i<RAM_SIZE;i++) initial_memory[i]=(uint8)(i*37U+11U);
 	memcpy(memory,initial_memory,RAM_SIZE);
 	virtual_cpu.core_id_num=1;
+	riscv_idle_spin_halt_init();
+	athrill_idle_spin_halt_init();
 	cpu_init();
-	alu_cases(); shift_logic_cases(); memory_cases(); pmp_cases(); code_store_cases(); early_end_cases(); random_cases();
-	printf("JIT differential: seed=0x%08x random-blocks=2000 %s (%u failures)\n",RANDOM_SEED,failures?"FAIL":"PASS",failures);
+	alu_cases(); shift_logic_cases(); branch_cases(); jump_cases(); chaining_cases();
+	if (failures == 0U) {
+		link_drop_cases(); memory_cases(); pmp_cases(); code_store_cases(); early_end_cases(); random_cases();
+	}
+	printf("JIT differential: seed=0x%08x random-programs=1000 supply-calls=10 %s (%u failures)\n",RANDOM_SEED,failures?"FAIL":"PASS",failures);
 	return failures?1:0;
 }
