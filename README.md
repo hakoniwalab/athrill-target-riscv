@@ -57,6 +57,28 @@ common Athrill options, memory map, and core parameters.
   per-instruction checks; a store into a block's code
   drops it. Results and clocks are the same as one instruction at a time.
 
+## Faster: a block JIT
+
+An optional JIT translates each block of the firmware into host code once, with
+[sljit](https://github.com/zherczeg/sljit), and chains the blocks: integer arithmetic, loads and stores, branches,
+jumps and single-precision loads and stores run as host code; everything else calls the interpreter's own code.
+**The output stays bit-identical.**
+
+PX4 `aifoundry_erbium_mavlink`, 15 virtual seconds, Apple M2 Pro, the same binary (2026-11-10):
+
+| | Host time | Real-time factor |
+| --- | ---: | ---: |
+| Interpreter | 9.7 s | 1.55 |
+| **JIT** | **3.3 s** | **4.5** |
+
+Both runs print the same console bytes and retire the same 1,493,367,748 instructions. A differential test
+(`athrill-jit-diff`) runs the interpreter and the JIT on the same state and compares the whole hart, the clock and
+memory after every call.
+
+The JIT is off by default. It needs the [sljit](https://github.com/zherczeg/sljit) checkout next to `athrill`
+(commit `23d64b7`), the CMake option `-DATHRILL_ENABLE_JIT=ON` and, in the device configuration,
+`DEVICE_CONFIG_RISCV_JIT 1`. It is an experiment, so far tested on Apple Silicon only.
+
 ## Debugging with GDB or LLDB
 
 `athrill3 -g<port>` starts a GDB remote server: break in PX4 or NuttX, step,
