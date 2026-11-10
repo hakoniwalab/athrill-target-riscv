@@ -14,7 +14,10 @@ with `DEVICE_CONFIG_DEVICE_TREE`. Paths are resolved from the process working di
 | `DEVICE_CPU_FREQ` | Virtual CPU frequency in MHz. The board's models (the machine timer converting Athrill clocks to `mtime` ticks) read it as the CPU clock; the core uses it to convert clocks to simulated time. Use a positive decimal value. | The target reports `200` to the models when the key is absent, while the core falls back to `100`; set the key explicitly to keep them consistent. | `DEVICE_CPU_FREQ 200` |
 
 The RISC-V target also implements the common core's idle-function and spin-halt hooks. It has no default idle
-function symbol, but `DEVICE_CONFIG_IDLE_FUNCTION` can name one; `DEVICE_CONFIG_SPIN_HALT 1` recognizes `JAL x0, 0`
+function symbol, but `DEVICE_CONFIG_IDLE_FUNCTION` can name one, together with `DISABLE_SYMBOL_UNDERSCORE 1`: by
+default the core drops the first character of every symbol name (the V850 underscore), and a name it cannot find is
+ignored without a message. Zephyr's `arch_cpu_idle` on the Erbium board polls `mip & mie`, so
+`examples/zephyr/run.sh` sets it as the idle function. `DEVICE_CONFIG_SPIN_HALT 1` recognizes `JAL x0, 0`
 and compressed `C.J` to self when no interrupt is ready. Both behaviors and their clock-skip dependency are described
 on the core page.
 
