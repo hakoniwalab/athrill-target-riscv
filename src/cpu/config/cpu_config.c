@@ -542,6 +542,7 @@ typedef struct {
 	 */
 	uint64 budget;
 	uint64 chain_slot;
+	uint64 indirect_miss;	/* 1: the run ended at a jalr whose target was not in the table */
 } RiscvJitCtx;
 
 static int riscv_jit_mode = -1;	/* -1: not read yet, 0: off, 1: on */
@@ -559,6 +560,7 @@ static uint64 riscv_jit_insns_run;
 static uint64 riscv_jit_block_length_sum;
 static std_bool riscv_jit_dumped;
 static AthrillJitChainSlot *riscv_jit_pending_slot;	/* the last run's unlinked exit */
+static std_bool riscv_jit_pending_indirect;	/* the last run ended at a jalr the table did not have */
 static uint64 riscv_jit_link_pmp_epoch;
 static RiscvPrivilege riscv_jit_link_privilege = RISCV_PRIV_M;
 
@@ -567,6 +569,7 @@ void riscv_jit_code_changed(void)
 {
 	athrill_jit_chain_unlink_all();
 	riscv_jit_pending_slot = NULL;
+	riscv_jit_pending_indirect = FALSE;
 }
 #ifdef ATHRILL_JIT_DIFF_TEST
 static uint64 riscv_jit_test_calls;
@@ -1296,6 +1299,10 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 		}
 		if (next_known) {
 			riscv_jit_exit_to(b, next_pc);
+		} else {
+			/* jalr: the target (t0) through the core's table; not found, report it */
+			athrill_jit_chain_indirect(b, RV_T0);
+			athrill_jit_mov(b, RV_CTX64(indirect_miss), athrill_jit_imm(1));
 		}
 	}
 	if (c_path_count != 0U) {
@@ -1370,6 +1377,7 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 		}
 		athrill_jit_cache_insert(riscv_jit_cache, pc, (uint32)core->reg.privilege, generation, fresh);
 		riscv_jit_pending_slot = NULL;	/* the insert may have freed the block it belongs to */
+		riscv_jit_pending_indirect = FALSE;
 		{
 			AthrillJitCacheStats st;
 
@@ -1400,6 +1408,11 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 		athrill_jit_chain_link(riscv_jit_pending_slot, code);
 	}
 	riscv_jit_pending_slot = NULL;
+	/* the run before ended at a jalr to this pc that the table did not have */
+	if (riscv_jit_pending_indirect && (pc != athrill_idle_spin_halt_idle_pc())) {
+		athrill_jit_chain_indirect_set(pc, code);
+	}
+	riscv_jit_pending_indirect = FALSE;
 	core->access_fault = FALSE;
 	ctx.trapped = 0U;
 	ctx.clock = clock;
@@ -1411,8 +1424,10 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 	}
 	ctx.budget = budget;
 	ctx.chain_slot = 0U;
+	ctx.indirect_miss = 0U;
 	done = athrill_jit_code_run(code, core, &ctx);
 	riscv_jit_pending_slot = (AthrillJitChainSlot *)(uintptr_t)ctx.chain_slot;
+	riscv_jit_pending_indirect = (ctx.indirect_miss != 0U);
 	riscv_jit_blocks_run++;
 	riscv_jit_insns_run += done;
 	riscv_jit_block_length_sum += length;
