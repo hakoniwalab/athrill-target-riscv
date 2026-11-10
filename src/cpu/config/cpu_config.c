@@ -510,6 +510,8 @@ ended:
  *     is followed by x[0] = 0.
  */
 #include "athrill_jit.h"
+#include "cpu_config.h"
+#include "op_exec_memory.h"
 
 typedef struct {
 	uint64 trapped;
@@ -517,6 +519,22 @@ typedef struct {
 	uint32 word;	/* the 32-bit result of a W instruction */
 	uint32 pending;	/* clocks to add before the next call */
 	CoreIdType id;
+	/*
+	 * Native loads and stores (riscv_jit_emit_memory()): the core's memory
+	 * window when the block starts (riscv_jit_window()). An access of
+	 * 2^k bytes at addr is direct when (addr - lo) < read_limit[k] (or
+	 * write_limit[k]); a limit of 0 sends every access to the C path.
+	 * A store whose (addr - code_lo) < code_span may overwrite decoded
+	 * code: it goes to the C path too, which invalidates the entries.
+	 */
+	uint64 addr;
+	uint64 offset;
+	uint64 bias;	/* host address of the window minus its guest start */
+	uint64 lo;
+	uint64 read_limit[4];
+	uint64 write_limit[4];
+	uint64 code_lo;
+	uint64 code_span;
 } RiscvJitCtx;
 
 static int riscv_jit_mode = -1;	/* -1: not read yet, 0: off, 1: on */
@@ -539,6 +557,7 @@ static std_bool riscv_jit_dumped;
 #define RV_PC athrill_jit_core((uint32)offsetof(TargetCoreType, reg.pc), 8)
 #define RV_WORD athrill_jit_ctx((uint32)offsetof(RiscvJitCtx, word), 4)
 #define RV_PENDING athrill_jit_ctx((uint32)offsetof(RiscvJitCtx, pending), 4)
+#define RV_CTX64(field) athrill_jit_ctx((uint32)offsetof(RiscvJitCtx, field), 8)
 
 static void riscv_jit_report(void)
 {
@@ -770,14 +789,17 @@ static std_bool riscv_jit_emit_native(AthrillJitBuilder *b, const RiscvDecodedIn
 	    && (x != op_exec_div) && (x != op_exec_divu) && (x != op_exec_rem) && (x != op_exec_remu)
 	    && (x != op_exec_addiw) && (x != op_exec_addw) && (x != op_exec_subw)
 	    && (x != op_exec_li) && (x != op_exec_lui) && (x != op_exec_auipc)
+	    && (x != op_exec_mv) && (x != op_exec_discard)
 	    && !riscv_jit_emit_logic_shift(NULL, e)) {
 		return FALSE;
 	}
-	if (e->rd == 0U) {
+	if ((e->rd == 0U) || (x == op_exec_discard)) {
 		return TRUE;	/* a write to x0: nothing happens */
 	}
 	if (riscv_jit_emit_logic_shift(b, e)) {
 		/* emitted */
+	} else if (x == op_exec_mv) {
+		athrill_jit_mov(b, RV_X(e->rd), RV_X(e->rs1));
 	} else if (x == op_exec_auipc) {
 		/* the pc is known when the block is translated */
 		athrill_jit_mov(b, RV_X(e->rd), athrill_jit_imm((sint64)(e->pc + e->immediate)));
@@ -814,6 +836,238 @@ static std_bool riscv_jit_emit_native(AthrillJitBuilder *b, const RiscvDecodedIn
 	return TRUE;
 }
 
+/* The integer loads and stores: size, sign extension, store. FALSE: not one. */
+static std_bool riscv_jit_memory_kind(RiscvDecodedExecutor x, uint8 *size, std_bool *sign_extend, std_bool *store)
+{
+	*sign_extend = FALSE;
+	*store = FALSE;
+	if (x == op_exec_lb) {
+		*size = 1U;
+		*sign_extend = TRUE;
+	} else if (x == op_exec_lh) {
+		*size = 2U;
+		*sign_extend = TRUE;
+	} else if (x == op_exec_lw) {
+		*size = 4U;
+		*sign_extend = TRUE;
+	} else if (x == op_exec_ld) {
+		*size = 8U;
+	} else if (x == op_exec_lbu) {
+		*size = 1U;
+	} else if (x == op_exec_lhu) {
+		*size = 2U;
+	} else if (x == op_exec_lwu) {
+		*size = 4U;
+	} else if (x == op_exec_sb) {
+		*size = 1U;
+		*store = TRUE;
+	} else if (x == op_exec_sh) {
+		*size = 2U;
+		*store = TRUE;
+	} else if (x == op_exec_sw) {
+		*size = 4U;
+		*store = TRUE;
+	} else if (x == op_exec_sd) {
+		*size = 8U;
+		*store = TRUE;
+	} else {
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static uint32 riscv_jit_size_index(uint8 size)
+{
+	if (size == 1U) {
+		return 0U;
+	}
+	if (size == 2U) {
+		return 1U;
+	}
+	if (size == 4U) {
+		return 2U;
+	}
+	return 3U;
+}
+
+/*
+ * A load or store with a direct path and the C path:
+ *
+ *   t0 = addr = x[rs1] + imm
+ *   if (addr - lo) >= limit -> C path          (outside the window, or PMP)
+ *   store: if (addr - code_lo) < code_span -> C path   (may hit decoded code)
+ *   direct: x[rd] = host[addr] / host[addr] = x[rs2]
+ *
+ * The direct path is what op_exec_memory_direct() + op_exec_memory_read()
+ * / _write() do for an access inside the window that PMP allows (Erbium
+ * mode: any alignment), with no fault and no device access, so the block
+ * goes on as execute_block() does. The C path is a called instruction,
+ * placed after the block's end (riscv_jit_emit_c_paths()) so that the
+ * direct paths run straight through.
+ * A load to x0 (no effect) and an Erbium-incompatible build stay called.
+ */
+typedef struct {
+	AthrillJitLabel *start;
+	AthrillJitLabel *resume;
+	const RiscvDecodedInsn *entry;
+	uint32 pending;
+	std_bool last;
+} RiscvJitCPath;
+
+#define RV_T0 athrill_jit_temp(0U, 8)
+#define RV_T1 athrill_jit_temp(1U, 8)
+
+static std_bool riscv_jit_emit_memory(AthrillJitBuilder *b, const RiscvDecodedInsn *e, uint32 pending, std_bool last,
+				      RiscvJitCPath *c_path)
+{
+	uint8 size;
+	std_bool sign_extend;
+	std_bool store;
+	uint32 k;
+
+	if (!CPU_CONFIG_ERBIUM_COMPAT) {
+		return FALSE;
+	}
+	if (!riscv_jit_memory_kind(e->execute, &size, &sign_extend, &store)) {
+		return FALSE;
+	}
+	if (!store && (e->rd == 0U)) {
+		return FALSE;
+	}
+	k = riscv_jit_size_index(size);
+	c_path->start = athrill_jit_label_new(b);
+	c_path->resume = athrill_jit_label_new(b);
+	c_path->entry = e;
+	c_path->pending = pending;
+	c_path->last = last;
+
+	athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_T0, RV_X(e->rs1), athrill_jit_imm((sint64)e->immediate));
+	athrill_jit_alu(b, ATHRILL_JIT_SUB, RV_T1, RV_T0, RV_CTX64(lo));
+	if (store) {
+		athrill_jit_jump_if(b, ATHRILL_JIT_GEU, RV_T1, RV_CTX64(write_limit[k]), c_path->start);
+		athrill_jit_alu(b, ATHRILL_JIT_SUB, RV_T1, RV_T0, RV_CTX64(code_lo));
+		athrill_jit_jump_if(b, ATHRILL_JIT_LTU, RV_T1, RV_CTX64(code_span), c_path->start);
+		athrill_jit_store_host(b, RV_X(e->rs2), RV_T0, RV_CTX64(bias), size);
+	} else {
+		athrill_jit_jump_if(b, ATHRILL_JIT_GEU, RV_T1, RV_CTX64(read_limit[k]), c_path->start);
+		athrill_jit_load_host(b, RV_X(e->rd), RV_T0, RV_CTX64(bias), size, sign_extend);
+	}
+	athrill_jit_label_place(b, c_path->resume);
+	return TRUE;
+}
+
+/*
+ * The C paths, after the block's end. Clocks: the call adds the pending
+ * clocks; when the block goes on, they are taken off again, as the direct
+ * path has not added them yet (pending keeps counting for both paths).
+ * The last instruction's C path ends the block: its pc and clock are the
+ * instruction's.
+ */
+static void riscv_jit_emit_c_paths(AthrillJitBuilder *b, const RiscvJitCPath *c_paths, uint32 count)
+{
+	uint32 i;
+
+	for (i = 0U; i < count; i++) {
+		athrill_jit_label_place(b, c_paths[i].start);
+		athrill_jit_mov(b, RV_PENDING, athrill_jit_imm(c_paths[i].pending));
+		athrill_jit_call(b, riscv_jit_call_insn, c_paths[i].entry);
+		if (c_paths[i].last) {
+			athrill_jit_exit(b);
+			continue;
+		}
+		athrill_jit_exit_if(b, ATHRILL_JIT_NE, athrill_jit_result(), athrill_jit_imm(0));
+		athrill_jit_alu(b, ATHRILL_JIT_SUB, athrill_jit_abs(riscv_jit_clock, 8), athrill_jit_abs(riscv_jit_clock, 8),
+				athrill_jit_imm(c_paths[i].pending));
+		athrill_jit_jump(b, c_paths[i].resume);
+	}
+}
+
+/*
+ * The memory window for the direct paths of one block run. The window
+ * may change during the block (a C-path access elsewhere refills it), but
+ * the region recorded here stays where it is (regions do not move), and
+ * PMP and the privilege only change at the last instruction of a block.
+ */
+typedef struct {
+	const TargetCoreType *core;
+	std_bool valid;
+	AthrillAddrType start;
+	uint8 *data;
+	uint64 pmp_epoch;
+	RiscvPrivilege privilege;
+	uint64 decode_lo;
+	uint64 decode_hi;
+} RiscvJitWindowKey;
+
+static RiscvJitWindowKey riscv_jit_window_key;
+static std_bool riscv_jit_window_known;
+
+static inline std_bool riscv_jit_window_unchanged(const TargetCoreType *core)
+{
+	const RiscvJitWindowKey *key = &riscv_jit_window_key;
+
+	return riscv_jit_window_known && (key->core == core) && (key->valid == core->memory_window.valid)
+	       && (key->start == core->memory_window.start) && (key->data == core->memory_window.data)
+	       && (key->pmp_epoch == core->pmp_epoch) && (key->privilege == core->reg.privilege)
+	       && (key->decode_lo == core->decode_lo) && (key->decode_hi == core->decode_hi);
+}
+
+/* Works out ctx's window fields again (they stay in ctx between runs). */
+static void riscv_jit_window(TargetCoreType *core, RiscvJitCtx *ctx)
+{
+	RiscvMemoryWindow *window = &core->memory_window;
+	uint64 size;
+	uint64 width;
+	uint32 k;
+
+	for (k = 0U; k < 4U; k++) {
+		ctx->read_limit[k] = 0U;
+		ctx->write_limit[k] = 0U;
+	}
+	ctx->lo = 0U;
+	ctx->bias = 0U;
+	if (window->valid) {
+		/* brings the window's PMP answers up to date (as the next access would) */
+		(void)op_exec_memory_direct(core, window->start, 1U, CpuMemoryAccess_READ);
+		size = window->end - window->start;
+		ctx->lo = window->start;
+		ctx->bias = (uint64)(uintptr_t)window->data - window->start;
+		for (k = 0U; k < 4U; k++) {
+			width = 1ULL << k;
+			if (size < width) {
+				continue;
+			}
+			if (window->pmp_read) {
+				ctx->read_limit[k] = size - width + 1U;
+			}
+			if (window->pmp_write) {
+				ctx->write_limit[k] = size - width + 1U;
+			}
+		}
+	}
+	/*
+	 * A store of up to 8 bytes at addr overwrites instructions starting in
+	 * [addr - 3, addr + 7]: it may hit decoded code when that meets
+	 * [decode_lo, decode_hi). No decode page: no store can.
+	 */
+	if (core->decode_hi == 0U) {
+		ctx->code_lo = 0U;
+		ctx->code_span = 0U;
+	} else {
+		ctx->code_lo = (core->decode_lo >= 7U) ? core->decode_lo - 7U : 0U;
+		ctx->code_span = core->decode_hi + 3U - ctx->code_lo;
+	}
+	riscv_jit_window_key.core = core;
+	riscv_jit_window_key.valid = window->valid;
+	riscv_jit_window_key.start = window->start;
+	riscv_jit_window_key.data = window->data;
+	riscv_jit_window_key.pmp_epoch = core->pmp_epoch;
+	riscv_jit_window_key.privilege = core->reg.privilege;
+	riscv_jit_window_key.decode_lo = core->decode_lo;
+	riscv_jit_window_key.decode_hi = core->decode_hi;
+	riscv_jit_window_known = TRUE;
+}
+
 static void riscv_jit_flush_clock(AthrillJitBuilder *b, uint32 *pending)
 {
 	if (*pending == 0U) {
@@ -831,6 +1085,8 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 	AthrillAddrType idle_pc = athrill_idle_spin_halt_idle_pc();
 	uint32 pending = 0U;
 	std_bool last_native = FALSE;
+	RiscvJitCPath c_paths[RISCV_BLOCK_MAX_LENGTH];
+	uint32 c_path_count = 0U;
 	uint64 i;
 
 	if (b == NULL) {
@@ -847,7 +1103,11 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 		}
 		athrill_jit_count(b, 1U);
 		pending++;
-		if (riscv_jit_emit_native(b, e)) {
+		if (riscv_jit_emit_memory(b, e, pending, last, &c_paths[c_path_count])) {
+			c_path_count++;
+			riscv_jit_insns_native++;
+			last_native = TRUE;
+		} else if (riscv_jit_emit_native(b, e)) {
 			riscv_jit_insns_native++;
 			last_native = TRUE;
 		} else {
@@ -868,6 +1128,10 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 		riscv_jit_flush_clock(b, &pending);
 		athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)(e->pc + e->length)));
 	}
+	if (c_path_count != 0U) {
+		athrill_jit_exit(b);
+		riscv_jit_emit_c_paths(b, c_paths, c_path_count);
+	}
 	return athrill_jit_builder_finish(b);
 }
 
@@ -881,7 +1145,7 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 	uint64 generation;
 	const AthrillJitCode *code;
 	AthrillJitCode *fresh;
-	RiscvJitCtx ctx;
+	static RiscvJitCtx ctx;	/* the window fields stay between runs */
 	uint64 done;
 
 	if (riscv_jit_clock == NULL) {
@@ -960,6 +1224,9 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 	ctx.word = 0U;
 	ctx.pending = 0U;
 	ctx.id = id;
+	if (!riscv_jit_window_unchanged(core)) {
+		riscv_jit_window(core, &ctx);
+	}
 	done = athrill_jit_code_run(code, core, &ctx);
 	riscv_jit_blocks_run++;
 	riscv_jit_insns_run += done;

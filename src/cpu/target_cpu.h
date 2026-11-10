@@ -122,6 +122,12 @@ typedef struct TargetCoreTypeTag {
     uint8 trace_store_size, trace_store_valid;
     /* Decoded instructions, one page per 4 KiB of code (riscv_decode.h). */
     struct RiscvDecodePage *decode_pages[RISCV_DECODE_DIRECTORY_SIZE];
+    /*
+     * The addresses that have held decode pages since the last clear:
+     * [decode_lo, decode_hi), only growing (0, 0: none). A store outside
+     * it cannot overwrite a decoded instruction (riscv_decode_slot()).
+     */
+    uint64 decode_lo, decode_hi;
 } TargetCoreType;
 
 static inline AthrillAddrType cpu_get_pc(const TargetCoreType *core) { return core->reg.pc; }
