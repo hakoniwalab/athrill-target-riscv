@@ -28,7 +28,7 @@ static int fp_binary(
 	}
 	left = bits_float(fp_read(core, decoded->rs1));
 	right = bits_float(fp_read(core, decoded->rs2));
-	feclearexcept(FE_ALL_EXCEPT);
+	fp_host_clear_flags();
 	if (operation == '+') {
 		result = left + right;
 		exact = (double)left + (double)right;
@@ -83,7 +83,7 @@ static int fp_fused(
 	if (negate_addend) {
 		addend = -addend;
 	}
-	feclearexcept(FE_ALL_EXCEPT);
+	fp_host_clear_flags();
 	result = fmaf(left, right, addend);
 	if (rounding != 4) {
 		return fp_finish(core, decoded, float_bits(result));
@@ -214,7 +214,7 @@ int op_exec_fsqrt_s(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 		return fp_illegal(core, decoded);
 	}
 	value = bits_float(fp_read(core, decoded->rs1));
-	feclearexcept(FE_ALL_EXCEPT);
+	fp_host_clear_flags();
 	result = sqrtf(value);
 	return fp_finish(core, decoded, rounding == 4 ?
 		rmm_adjust(sqrt((double)value), 0.0, float_bits(result)) : float_bits(result));

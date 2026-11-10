@@ -160,7 +160,7 @@ static int integer_to_fp(
 		riscv_raise_exception(core, 30U, decoded->instruction);
 		return RISCV_EXEC_TRAP;
 	}
-	feclearexcept(FE_ALL_EXCEPT);
+	fp_host_clear_flags();
 	if (unsigned_value && long_value) {
 		result = (float)core->reg.x[decoded->rs1];
 	}

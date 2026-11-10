@@ -82,28 +82,8 @@ void fp_write(TargetCoreType *core, uint8 reg, uint32 bits)
 	fp_dirty(core);
 }
 
-static uint32 host_flags(void)
-{
-	int exceptions = fetestexcept(FE_ALL_EXCEPT);
-	uint32 flags = 0U;
-
-	if ((exceptions & FE_INEXACT) != 0) {
-		flags |= FFLAG_NX;
-	}
-	if ((exceptions & FE_UNDERFLOW) != 0) {
-		flags |= FFLAG_UF;
-	}
-	if ((exceptions & FE_OVERFLOW) != 0) {
-		flags |= FFLAG_OF;
-	}
-	if ((exceptions & FE_DIVBYZERO) != 0) {
-		flags |= FFLAG_DZ;
-	}
-	if ((exceptions & FE_INVALID) != 0) {
-		flags |= FFLAG_NV;
-	}
-	return flags;
-}
+/* The host rounding mode set_rounding() set last (-1: not set yet). */
+static int fp_host_round = -1;
 
 int set_rounding(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 {
@@ -131,7 +111,11 @@ int set_rounding(TargetCoreType *core, const RiscvDecodedInsn *decoded)
 	/* RMM ties are repaired explicitly by integer conversions.  Native
 	 * operations use nearest-even; exact halfway binary32 arithmetic cases
 	 * are detected and adjusted by fp_binary/fp_fused below. */
-	fesetround(host_mode);
+	/* only this function sets the host's rounding mode: set it when it changes */
+	if (host_mode != fp_host_round) {
+		fesetround(host_mode);
+		fp_host_round = host_mode;
+	}
 	return (int)rm;
 }
 
@@ -140,7 +124,7 @@ int fp_finish(
 	const RiscvDecodedInsn *decoded,
 	uint32 bits)
 {
-	core->reg.fcsr |= host_flags();
+	core->reg.fcsr |= fp_host_flags();
 	if (CPU_CONFIG_ERBIUM_COMPAT && is_denormal_bits(bits)) {
 		bits &= 0x80000000U;
 		core->reg.fcsr |= FFLAG_UF | FFLAG_NX;
