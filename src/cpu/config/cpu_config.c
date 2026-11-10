@@ -317,7 +317,7 @@ static std_bool batch_can_continue(const TargetCoreType *core)
 
 /*
  * The common case of cpu_supply_clock(), without its general handling:
- * no interrupt pending, the instruction in the decode cache with its bytes
+ * no interrupt to take (intc_interrupt_takeable()), the instruction in the decode cache with its bytes
  * unchanged, and no trace. Returns FALSE (nothing done) otherwise, and the
  * caller runs cpu_supply_clock().
  */
@@ -327,7 +327,7 @@ static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
 	uint64 pc = core->reg.pc;
 	int retired;
 
-	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
+	if (intc_interrupt_takeable(core)) {
 		return FALSE;
 	}
 	decoded = riscv_decode_lookup(core, core->reg.pc);
@@ -360,11 +360,14 @@ static inline std_bool execute_cached(TargetCoreType *core, CoreIdType id)
  * code (riscv_decode_cache_invalidate) advances the page generation, which
  * drops the page's blocks; a refilled entry starts without one.
  *
- * Within a block nothing but the instructions changes the interrupt state:
- * CSR accesses end it, and a device register access ends it (and the batch)
- * right after the instruction, as in execute_cached(). An instruction that
- * traps leaves the pc off the next entry and ends it too. So a block gives
- * the same clocks and results as its instructions one by one.
+ * Within a block nothing but the instructions changes the interrupt state
+ * (mip, mie, mstatus.MIE, the privilege): CSR accesses and mret end it,
+ * and a device register access ends it (and the batch) right after the
+ * instruction, as in execute_cached(). An instruction that traps leaves the
+ * pc off the next entry and ends it too. So a block that starts with no
+ * interrupt to take (intc_interrupt_takeable(); one pending but globally
+ * disabled is none) gives the same clocks and results as its instructions
+ * one by one.
  */
 #define RISCV_BLOCK_MAX_LENGTH 64U
 
@@ -417,7 +420,7 @@ static inline uint64 execute_block(TargetCoreType *core, CoreIdType id, uint64 b
 	uint64 trapped = 0U;
 	int retired;
 
-	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
+	if (intc_interrupt_takeable(core)) {
 		return 0U;
 	}
 	page = riscv_decode_page(core, pc);
@@ -1375,7 +1378,7 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 		riscv_jit_link_pmp_epoch = core->pmp_epoch;
 		riscv_jit_link_privilege = core->reg.privilege;
 	}
-	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
+	if (intc_interrupt_takeable(core)) {
 		return 0U;
 	}
 	page = riscv_decode_page(core, pc);
