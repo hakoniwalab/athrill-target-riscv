@@ -552,7 +552,7 @@ static uint64 riscv_jit_insns_native;
 static uint64 riscv_jit_insns_called;
 static uint64 riscv_jit_translate_failures;
 static uint64 riscv_jit_epoch = 1U;	/* changes when the cache flushes (entries' jit_code invalid) */
-static uint32 riscv_jit_min_length = 2U;
+static uint32 riscv_jit_min_length = 1U;
 /* measurements: instructions per block run (0..64), instructions run by blocks */
 static uint64 riscv_jit_run_length[RISCV_BLOCK_MAX_LENGTH + 1U];
 static uint64 riscv_jit_insns_run;
@@ -1431,7 +1431,7 @@ void riscv_jit_test_set_enabled(std_bool enabled)
 		riscv_jit_cache = athrill_jit_cache_create(65536U);
 	}
 	riscv_jit_mode = (enabled && (riscv_jit_cache != NULL)) ? 1 : 0;
-	riscv_jit_min_length = 2U;
+	riscv_jit_min_length = 1U;
 	riscv_jit_window_known = FALSE;
 	riscv_jit_code_changed();	/* no chain link carries over between runs */
 }
