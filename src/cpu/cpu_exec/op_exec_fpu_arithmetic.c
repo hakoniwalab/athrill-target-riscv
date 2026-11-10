@@ -28,6 +28,27 @@
 #define FP_FAST_MIN_MAGNITUDE 0x1p-126
 #define FP_FAST_MAX_MAGNITUDE 0x1p127
 
+#ifdef ATHRILL_FPU_FAST_TEST
+static std_bool fp_fast_test_disabled;
+static uint64 fp_fast_test_hits;
+
+void riscv_fpu_fast_test_set_disabled(std_bool disabled)
+{
+	fp_fast_test_disabled = disabled;
+}
+
+uint64 riscv_fpu_fast_test_hits(void)
+{
+	return fp_fast_test_hits;
+}
+
+#define FP_FAST_TEST_ALLOWED() (!fp_fast_test_disabled)
+#define FP_FAST_TEST_HIT() (fp_fast_test_hits++)
+#else
+#define FP_FAST_TEST_ALLOWED() TRUE
+#define FP_FAST_TEST_HIT() ((void)0)
+#endif
+
 static std_bool fp_fast_finite(float value)
 {
 	return isfinite(value);
@@ -52,6 +73,7 @@ static void fp_two_sum(double x, double y, double *s, double *t)
 
 static int fp_fast_finish(TargetCoreType *core, const RiscvDecodedInsn *decoded, float result, std_bool inexact)
 {
+	FP_FAST_TEST_HIT();
 	if (inexact) {
 		core->reg.fcsr |= FFLAG_NX;
 	}
@@ -117,7 +139,8 @@ static int fp_binary(
 	}
 	left = bits_float(fp_read(core, decoded->rs1));
 	right = bits_float(fp_read(core, decoded->rs2));
-	if ((rounding == 0) && fp_binary_fast(core, decoded, operation, left, right, &retired)) {
+	if ((rounding == 0) && FP_FAST_TEST_ALLOWED() &&
+		fp_binary_fast(core, decoded, operation, left, right, &retired)) {
 		return retired;
 	}
 	fp_host_clear_flags();
@@ -175,7 +198,8 @@ static int fp_fused(
 	if (negate_addend) {
 		addend = -addend;
 	}
-	if ((rounding == 0) && fp_fast_finite(left) && fp_fast_finite(right) && fp_fast_finite(addend)) {
+	if ((rounding == 0) && FP_FAST_TEST_ALLOWED() && fp_fast_finite(left) &&
+		fp_fast_finite(right) && fp_fast_finite(addend)) {
 		/* the common case (see fp_binary_fast()): the exact sum is s + t */
 		double s;
 		double t;

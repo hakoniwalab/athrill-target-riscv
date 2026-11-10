@@ -166,6 +166,26 @@ if(BUILD_TESTING)
     src/device/device.c src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
+  set(_fpu_fast_test_sources test/fpu_fast_test.c
+    ${RISCV_CPU_SOURCES}
+    ${ATHRILL_JIT_SOURCES}
+    "${ATHRILL_SRC_DIR}/main/athrill_idle_spin_halt.c"
+    src/device/device.c src/device/intc/intc.c)
+  add_executable(athrill-fpu-fast-test ${_fpu_fast_test_sources})
+  riscv_target(athrill-fpu-fast-test)
+  target_compile_definitions(athrill-fpu-fast-test PRIVATE ATHRILL_FPU_FAST_TEST=1)
+  if(RISCV_ERBIUM_COMPAT)
+    target_compile_options(athrill-fpu-fast-test PRIVATE
+      -UCPU_CONFIG_ERBIUM_COMPAT -DCPU_CONFIG_ERBIUM_COMPAT=0)
+  endif()
+  add_test(NAME athrill-fpu-fast COMMAND athrill-fpu-fast-test)
+  if(RISCV_ERBIUM_COMPAT)
+    add_executable(athrill-fpu-fast-erbium-test ${_fpu_fast_test_sources})
+    riscv_target(athrill-fpu-fast-erbium-test)
+    target_compile_definitions(athrill-fpu-fast-erbium-test PRIVATE ATHRILL_FPU_FAST_TEST=1)
+    add_test(NAME athrill-fpu-fast-erbium COMMAND athrill-fpu-fast-erbium-test)
+  endif()
+  unset(_fpu_fast_test_sources)
   if(ATHRILL_ENABLE_JIT)
     add_executable(athrill-jit-diff-test test/jit_diff_test.c
       ${RISCV_CPU_SOURCES} ${ATHRILL_JIT_SOURCES}
