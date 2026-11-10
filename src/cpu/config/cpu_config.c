@@ -674,6 +674,92 @@ static void riscv_jit_emit_division(AthrillJitBuilder *b, AthrillJitAluOp op, co
 	athrill_jit_label_place(b, end);
 }
 
+/*
+ * The logic and shift instructions (op_exec_logic.c, op_exec_shift.c).
+ * b == NULL: only says whether e is one of them. Shift counts: the host
+ * masks them by (width - 1), the same as RISC-V (6 bits; 5 bits for W).
+ * W forms work on the low 32 bits and sign-extend the result.
+ */
+static std_bool riscv_jit_emit_logic_shift(AthrillJitBuilder *b, const RiscvDecodedInsn *e)
+{
+	RiscvDecodedExecutor x = e->execute;
+	sint64 imm = (sint64)e->immediate;
+	AthrillJitAluOp op;
+	std_bool word = FALSE;
+	std_bool use_imm = TRUE;
+
+	if (x == op_exec_andi) {
+		op = ATHRILL_JIT_AND;
+	} else if (x == op_exec_ori) {
+		op = ATHRILL_JIT_OR;
+	} else if (x == op_exec_xori) {
+		op = ATHRILL_JIT_XOR;
+	} else if (x == op_exec_and) {
+		op = ATHRILL_JIT_AND;
+		use_imm = FALSE;
+	} else if (x == op_exec_or) {
+		op = ATHRILL_JIT_OR;
+		use_imm = FALSE;
+	} else if (x == op_exec_xor) {
+		op = ATHRILL_JIT_XOR;
+		use_imm = FALSE;
+	} else if (x == op_exec_slli) {
+		op = ATHRILL_JIT_SHL;
+		imm &= 63;
+	} else if (x == op_exec_srli) {
+		op = ATHRILL_JIT_SHR;
+		imm &= 63;
+	} else if (x == op_exec_srai) {
+		op = ATHRILL_JIT_SAR;
+		imm &= 63;
+	} else if (x == op_exec_sll) {
+		op = ATHRILL_JIT_SHL;
+		use_imm = FALSE;
+	} else if (x == op_exec_srl) {
+		op = ATHRILL_JIT_SHR;
+		use_imm = FALSE;
+	} else if (x == op_exec_sra) {
+		op = ATHRILL_JIT_SAR;
+		use_imm = FALSE;
+	} else if (x == op_exec_slliw) {
+		op = ATHRILL_JIT_SHL;
+		imm &= 31;
+		word = TRUE;
+	} else if (x == op_exec_srliw) {
+		op = ATHRILL_JIT_SHR;
+		imm &= 31;
+		word = TRUE;
+	} else if (x == op_exec_sraiw) {
+		op = ATHRILL_JIT_SAR;
+		imm &= 31;
+		word = TRUE;
+	} else if (x == op_exec_sllw) {
+		op = ATHRILL_JIT_SHL;
+		use_imm = FALSE;
+		word = TRUE;
+	} else if (x == op_exec_srlw) {
+		op = ATHRILL_JIT_SHR;
+		use_imm = FALSE;
+		word = TRUE;
+	} else if (x == op_exec_sraw) {
+		op = ATHRILL_JIT_SAR;
+		use_imm = FALSE;
+		word = TRUE;
+	} else {
+		return FALSE;
+	}
+	if (b == NULL) {
+		return TRUE;
+	}
+	if (word) {
+		athrill_jit_alu(b, op, RV_WORD, RV_X32(e->rs1), use_imm ? athrill_jit_imm(imm) : RV_X32(e->rs2));
+		athrill_jit_movs(b, RV_X(e->rd), RV_WORD);
+	} else {
+		athrill_jit_alu(b, op, RV_X(e->rd), RV_X(e->rs1), use_imm ? athrill_jit_imm(imm) : RV_X(e->rs2));
+	}
+	return TRUE;
+}
+
 /* Emits e natively; FALSE: not one of the native instructions. */
 static std_bool riscv_jit_emit_native(AthrillJitBuilder *b, const RiscvDecodedInsn *e)
 {
@@ -683,13 +769,19 @@ static std_bool riscv_jit_emit_native(AthrillJitBuilder *b, const RiscvDecodedIn
 	if ((x != op_exec_addi) && (x != op_exec_add) && (x != op_exec_sub) && (x != op_exec_mul)
 	    && (x != op_exec_div) && (x != op_exec_divu) && (x != op_exec_rem) && (x != op_exec_remu)
 	    && (x != op_exec_addiw) && (x != op_exec_addw) && (x != op_exec_subw)
-	    && (x != op_exec_li) && (x != op_exec_lui)) {
+	    && (x != op_exec_li) && (x != op_exec_lui) && (x != op_exec_auipc)
+	    && !riscv_jit_emit_logic_shift(NULL, e)) {
 		return FALSE;
 	}
 	if (e->rd == 0U) {
 		return TRUE;	/* a write to x0: nothing happens */
 	}
-	if (x == op_exec_addi) {
+	if (riscv_jit_emit_logic_shift(b, e)) {
+		/* emitted */
+	} else if (x == op_exec_auipc) {
+		/* the pc is known when the block is translated */
+		athrill_jit_mov(b, RV_X(e->rd), athrill_jit_imm((sint64)(e->pc + e->immediate)));
+	} else if (x == op_exec_addi) {
 		athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_X(e->rd), RV_X(e->rs1), athrill_jit_imm(imm));
 	} else if (x == op_exec_add) {
 		athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_X(e->rd), RV_X(e->rs1), RV_X(e->rs2));
