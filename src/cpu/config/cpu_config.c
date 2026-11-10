@@ -581,6 +581,9 @@ static uint64 riscv_jit_test_calls;
 #define RV_WORD athrill_jit_ctx((uint32)offsetof(RiscvJitCtx, word), 4)
 #define RV_PENDING athrill_jit_ctx((uint32)offsetof(RiscvJitCtx, pending), 4)
 #define RV_CTX64(field) athrill_jit_ctx((uint32)offsetof(RiscvJitCtx, field), 8)
+#define RV_F(n) athrill_jit_core((uint32)(offsetof(TargetCoreType, reg.f) + 8U * (uint32)(n)), 8)
+#define RV_MSTATUS athrill_jit_core((uint32)offsetof(TargetCoreType, reg.csr.mstatus), 8)
+#define RISCV_JIT_MSTATUS_FS (3ULL << 13U)	/* fp_enabled(), fp_dirty() */
 
 static void riscv_jit_report(void)
 {
@@ -864,12 +867,24 @@ static std_bool riscv_jit_emit_native(AthrillJitBuilder *b, const RiscvDecodedIn
 	return TRUE;
 }
 
-/* The integer loads and stores: size, sign extension, store. FALSE: not one. */
-static std_bool riscv_jit_memory_kind(RiscvDecodedExecutor x, uint8 *size, std_bool *sign_extend, std_bool *store)
+/*
+ * The integer loads and stores and flw/fsw: size, sign extension, store,
+ * float. FALSE: not one.
+ */
+static std_bool riscv_jit_memory_kind(RiscvDecodedExecutor x, uint8 *size, std_bool *sign_extend, std_bool *store,
+				      std_bool *fp)
 {
 	*sign_extend = FALSE;
 	*store = FALSE;
-	if (x == op_exec_lb) {
+	*fp = FALSE;
+	if (x == op_exec_flw) {
+		*size = 4U;
+		*fp = TRUE;
+	} else if (x == op_exec_fsw) {
+		*size = 4U;
+		*store = TRUE;
+		*fp = TRUE;
+	} else if (x == op_exec_lb) {
 		*size = 1U;
 		*sign_extend = TRUE;
 	} else if (x == op_exec_lh) {
@@ -953,16 +968,17 @@ static std_bool riscv_jit_emit_memory(AthrillJitBuilder *b, const RiscvDecodedIn
 	uint8 size;
 	std_bool sign_extend;
 	std_bool store;
+	std_bool fp;
 	uint32 k;
 
 	if (!CPU_CONFIG_ERBIUM_COMPAT) {
 		return FALSE;
 	}
-	if (!riscv_jit_memory_kind(e->execute, &size, &sign_extend, &store)) {
+	if (!riscv_jit_memory_kind(e->execute, &size, &sign_extend, &store, &fp)) {
 		return FALSE;
 	}
-	if (!store && (e->rd == 0U)) {
-		return FALSE;
+	if (!store && !fp && (e->rd == 0U)) {
+		return FALSE;	/* f0 is a register like any other */
 	}
 	k = riscv_jit_size_index(size);
 	c_path->start = athrill_jit_label_new(b);
@@ -973,9 +989,26 @@ static std_bool riscv_jit_emit_memory(AthrillJitBuilder *b, const RiscvDecodedIn
 	c_path->taken = FALSE;
 	c_path->target = 0U;
 
+	if (fp) {
+		/* the FPU off (mstatus.FS = 0): the C path (an illegal instruction) */
+		athrill_jit_alu(b, ATHRILL_JIT_AND, RV_T1, RV_MSTATUS, athrill_jit_imm((sint64)RISCV_JIT_MSTATUS_FS));
+		athrill_jit_jump_if(b, ATHRILL_JIT_EQ, RV_T1, athrill_jit_imm(0), c_path->start);
+	}
 	athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_T0, RV_X(e->rs1), athrill_jit_imm((sint64)e->immediate));
 	athrill_jit_alu(b, ATHRILL_JIT_SUB, RV_T1, RV_T0, RV_CTX64(lo));
-	if (store) {
+	if (store && fp) {
+		/* fsw: the low 32 bits of f[rs2], as op_exec_fsw() */
+		athrill_jit_jump_if(b, ATHRILL_JIT_GEU, RV_T1, RV_CTX64(write_limit[k]), c_path->start);
+		athrill_jit_alu(b, ATHRILL_JIT_SUB, RV_T1, RV_T0, RV_CTX64(code_lo));
+		athrill_jit_jump_if(b, ATHRILL_JIT_LTU, RV_T1, RV_CTX64(code_span), c_path->start);
+		athrill_jit_store_host(b, RV_F(e->rs2), RV_T0, RV_CTX64(bias), size);
+	} else if (fp) {
+		/* flw: f[rd] = the 32 bits NaN-boxed, the FPU state dirty (fp_write()) */
+		athrill_jit_jump_if(b, ATHRILL_JIT_GEU, RV_T1, RV_CTX64(read_limit[k]), c_path->start);
+		athrill_jit_load_host(b, RV_T1, RV_T0, RV_CTX64(bias), size, FALSE);
+		athrill_jit_alu(b, ATHRILL_JIT_OR, RV_F(e->rd), RV_T1, athrill_jit_imm((sint64)0xffffffff00000000ULL));
+		athrill_jit_alu(b, ATHRILL_JIT_OR, RV_MSTATUS, RV_MSTATUS, athrill_jit_imm((sint64)RISCV_JIT_MSTATUS_FS));
+	} else if (store) {
 		athrill_jit_jump_if(b, ATHRILL_JIT_GEU, RV_T1, RV_CTX64(write_limit[k]), c_path->start);
 		athrill_jit_alu(b, ATHRILL_JIT_SUB, RV_T1, RV_T0, RV_CTX64(code_lo));
 		athrill_jit_jump_if(b, ATHRILL_JIT_LTU, RV_T1, RV_CTX64(code_span), c_path->start);
