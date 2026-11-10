@@ -912,6 +912,8 @@ typedef struct {
 	const RiscvDecodedInsn *entry;
 	uint32 pending;
 	std_bool last;
+	std_bool taken;	/* a taken branch's exit (riscv_jit_emit_branch()), not a call */
+	uint64 target;
 } RiscvJitCPath;
 
 #define RV_T0 athrill_jit_temp(0U, 8)
@@ -940,6 +942,8 @@ static std_bool riscv_jit_emit_memory(AthrillJitBuilder *b, const RiscvDecodedIn
 	c_path->entry = e;
 	c_path->pending = pending;
 	c_path->last = last;
+	c_path->taken = FALSE;
+	c_path->target = 0U;
 
 	athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_T0, RV_X(e->rs1), athrill_jit_imm((sint64)e->immediate));
 	athrill_jit_alu(b, ATHRILL_JIT_SUB, RV_T1, RV_T0, RV_CTX64(lo));
@@ -969,6 +973,14 @@ static void riscv_jit_emit_c_paths(AthrillJitBuilder *b, const RiscvJitCPath *c_
 
 	for (i = 0U; i < count; i++) {
 		athrill_jit_label_place(b, c_paths[i].start);
+		if (c_paths[i].taken) {
+			/* a taken branch: the block ends at the target */
+			athrill_jit_alu(b, ATHRILL_JIT_ADD, athrill_jit_abs(riscv_jit_clock, 8),
+					athrill_jit_abs(riscv_jit_clock, 8), athrill_jit_imm(c_paths[i].pending));
+			athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)c_paths[i].target));
+			athrill_jit_exit(b);
+			continue;
+		}
 		athrill_jit_mov(b, RV_PENDING, athrill_jit_imm(c_paths[i].pending));
 		athrill_jit_call(b, riscv_jit_call_insn, c_paths[i].entry);
 		if (c_paths[i].last) {
@@ -980,6 +992,97 @@ static void riscv_jit_emit_c_paths(AthrillJitBuilder *b, const RiscvJitCPath *c_
 				athrill_jit_imm(c_paths[i].pending));
 		athrill_jit_jump(b, c_paths[i].resume);
 	}
+}
+
+/*
+ * Conditional branches (op_exec_branch.c). Not taken, the block goes on;
+ * taken, it ends with the pc at the target (as execute_block() ends when
+ * the pc is off the next entry), through an exit placed after the block's
+ * end. The target is known at translation. Stay called: a misaligned
+ * target (it traps) and a branch to itself (the idle and spin-halt checks
+ * after the instruction need the C path).
+ */
+static std_bool riscv_jit_emit_branch(AthrillJitBuilder *b, const RiscvDecodedInsn *e, uint32 pending,
+				      RiscvJitCPath *taken)
+{
+	RiscvDecodedExecutor x = e->execute;
+	uint64 target = e->pc + e->immediate;
+	AthrillJitCond cond;
+
+	if (x == op_exec_beq) {
+		cond = ATHRILL_JIT_EQ;
+	} else if (x == op_exec_bne) {
+		cond = ATHRILL_JIT_NE;
+	} else if (x == op_exec_blt) {
+		cond = ATHRILL_JIT_LTS;
+	} else if (x == op_exec_bge) {
+		cond = ATHRILL_JIT_GES;
+	} else if (x == op_exec_bltu) {
+		cond = ATHRILL_JIT_LTU;
+	} else if (x == op_exec_bgeu) {
+		cond = ATHRILL_JIT_GEU;
+	} else {
+		return FALSE;
+	}
+	if (((target & 1U) != 0U) || (target == e->pc)) {
+		return FALSE;
+	}
+	taken->start = athrill_jit_label_new(b);
+	taken->resume = NULL;
+	taken->entry = e;
+	taken->pending = pending;
+	taken->last = FALSE;
+	taken->taken = TRUE;
+	taken->target = target;
+	athrill_jit_jump_if(b, cond, RV_X(e->rs1), RV_X(e->rs2), taken->start);
+	return TRUE;
+}
+
+/*
+ * jal and jalr, the last instruction of a block: x[rd] = the next pc, the
+ * pc = the target. *pc_written: the epilogue must not set the pc again.
+ * jal: the target is known; a misaligned one (it traps) or a jump to itself
+ * (idle and spin-halt checks) stays called. jalr: the target is cleared of
+ * bit 0, so it cannot be misaligned; a jump to itself goes to the C path,
+ * which runs the whole instruction again (nothing is written before it).
+ */
+static std_bool riscv_jit_emit_jump(AthrillJitBuilder *b, const RiscvDecodedInsn *e, uint32 pending,
+				    RiscvJitCPath *c_path, std_bool *pc_written)
+{
+	uint64 next = e->pc + e->length;
+	uint64 target;
+
+	if (e->execute == op_exec_jal) {
+		target = e->pc + e->immediate;
+		if (((target & 1U) != 0U) || (target == e->pc)) {
+			return FALSE;
+		}
+		if (e->rd != 0U) {
+			athrill_jit_mov(b, RV_X(e->rd), athrill_jit_imm((sint64)next));
+		}
+		athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)target));
+		*pc_written = TRUE;
+		return TRUE;
+	}
+	if (e->execute != op_exec_jalr) {
+		return FALSE;
+	}
+	c_path->start = athrill_jit_label_new(b);
+	c_path->resume = NULL;
+	c_path->entry = e;
+	c_path->pending = pending;
+	c_path->last = TRUE;
+	c_path->taken = FALSE;
+	c_path->target = 0U;
+	athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_T0, RV_X(e->rs1), athrill_jit_imm((sint64)e->immediate));
+	athrill_jit_alu(b, ATHRILL_JIT_AND, RV_T0, RV_T0, athrill_jit_imm(-2));
+	athrill_jit_jump_if(b, ATHRILL_JIT_EQ, RV_T0, athrill_jit_imm((sint64)e->pc), c_path->start);
+	if (e->rd != 0U) {
+		athrill_jit_mov(b, RV_X(e->rd), athrill_jit_imm((sint64)next));
+	}
+	athrill_jit_mov(b, RV_PC, RV_T0);
+	*pc_written = TRUE;
+	return TRUE;
 }
 
 /*
@@ -1087,6 +1190,7 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 	std_bool last_native = FALSE;
 	RiscvJitCPath c_paths[RISCV_BLOCK_MAX_LENGTH];
 	uint32 c_path_count = 0U;
+	std_bool pc_written = FALSE;
 	uint64 i;
 
 	if (b == NULL) {
@@ -1105,6 +1209,16 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 		pending++;
 		if (riscv_jit_emit_memory(b, e, pending, last, &c_paths[c_path_count])) {
 			c_path_count++;
+			riscv_jit_insns_native++;
+			last_native = TRUE;
+		} else if (riscv_jit_emit_branch(b, e, pending, &c_paths[c_path_count])) {
+			c_path_count++;
+			riscv_jit_insns_native++;
+			last_native = TRUE;
+		} else if (last && riscv_jit_emit_jump(b, e, pending, &c_paths[c_path_count], &pc_written)) {
+			if (e->execute == op_exec_jalr) {
+				c_path_count++;
+			}
 			riscv_jit_insns_native++;
 			last_native = TRUE;
 		} else if (riscv_jit_emit_native(b, e)) {
@@ -1126,7 +1240,9 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 	}
 	if (last_native) {
 		riscv_jit_flush_clock(b, &pending);
-		athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)(e->pc + e->length)));
+		if (!pc_written) {
+			athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)(e->pc + e->length)));
+		}
 	}
 	if (c_path_count != 0U) {
 		athrill_jit_exit(b);
