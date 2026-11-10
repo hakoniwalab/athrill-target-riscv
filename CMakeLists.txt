@@ -166,6 +166,15 @@ if(BUILD_TESTING)
     src/device/device.c src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
+  if(ATHRILL_ENABLE_JIT)
+    add_executable(athrill-jit-diff-test test/jit_diff_test.c
+      ${RISCV_CPU_SOURCES} ${ATHRILL_JIT_SOURCES}
+      "${ATHRILL_SRC_DIR}/main/athrill_idle_spin_halt.c"
+      src/device/device.c src/device/intc/intc.c)
+    riscv_target(athrill-jit-diff-test)
+    target_compile_definitions(athrill-jit-diff-test PRIVATE ATHRILL_JIT_DIFF_TEST=1)
+    add_test(NAME athrill-jit-diff COMMAND athrill-jit-diff-test)
+  endif()
   add_executable(athrill-symbol-lookup-test "${ATHRILL_SOURCE_DIR}/test/symbol_lookup_test.c"
     "${ATHRILL_SRC_DIR}/lib/symbol_ops.c")
   riscv_target(athrill-symbol-lookup-test)

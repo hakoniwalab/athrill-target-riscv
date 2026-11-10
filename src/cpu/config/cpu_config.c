@@ -568,6 +568,9 @@ void riscv_jit_code_changed(void)
 	athrill_jit_chain_unlink_all();
 	riscv_jit_pending_slot = NULL;
 }
+#ifdef ATHRILL_JIT_DIFF_TEST
+static uint64 riscv_jit_test_calls;
+#endif
 
 #define RV_X(n) athrill_jit_core((uint32)(offsetof(TargetCoreType, reg.x) + 8U * (uint32)(n)), 8)
 #define RV_X32(n) athrill_jit_core((uint32)(offsetof(TargetCoreType, reg.x) + 8U * (uint32)(n)), 4)
@@ -642,6 +645,10 @@ static int riscv_jit_call_insn(void *core_v, void *ctx_v, const void *arg)
 	RiscvJitCtx *ctx = (RiscvJitCtx *)ctx_v;
 	const RiscvDecodedInsn *entry = (const RiscvDecodedInsn *)arg;
 	int retired;
+
+#ifdef ATHRILL_JIT_DIFF_TEST
+	riscv_jit_test_calls++;
+#endif
 
 	*ctx->clock += ctx->pending;
 	core->reg.pc = entry->pc;
@@ -1415,6 +1422,28 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 	virtual_cpu.cores[id].elaps += done;
 	return done;
 }
+
+#ifdef ATHRILL_JIT_DIFF_TEST
+/* Narrow control/observation surface for test/jit_diff_test.c only. */
+void riscv_jit_test_set_enabled(std_bool enabled)
+{
+	if (enabled && (riscv_jit_cache == NULL)) {
+		riscv_jit_cache = athrill_jit_cache_create(65536U);
+	}
+	riscv_jit_mode = (enabled && (riscv_jit_cache != NULL)) ? 1 : 0;
+	riscv_jit_min_length = 2U;
+	riscv_jit_window_known = FALSE;
+	riscv_jit_code_changed();	/* no chain link carries over between runs */
+}
+
+void riscv_jit_test_get_counters(uint64 *blocks, uint64 *native, uint64 *called, uint64 *runtime_calls)
+{
+	*blocks = riscv_jit_blocks_run;
+	*native = riscv_jit_insns_native;
+	*called = riscv_jit_insns_called;
+	*runtime_calls = riscv_jit_test_calls;
+}
+#endif
 #endif /* ATHRILL_ENABLE_JIT */
 
 Std_ReturnType cpu_supply_clocks(CoreIdType core_id, uint64 max_clocks, uint64 *clock, uint64 *executed)
