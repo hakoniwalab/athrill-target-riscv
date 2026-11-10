@@ -1,4 +1,5 @@
 #pragma STDC FENV_ACCESS ON
+#pragma STDC FP_CONTRACT OFF
 
 #include "op_exec_fpu_internal.h"
 #include "op_exec_memory.h"
@@ -11,11 +12,99 @@
 #include "pmp.h"
 #include "riscv_decode.h"
 
+/*
+ * The common case without the host's exception flags (reading and
+ * clearing them costs more than the operation): round to nearest even,
+ * finite operands, and an exact result that is 0 or whose magnitude lies in
+ * (2^-126, 2^127], so that no flag but inexact can be raised and the
+ * result is a normal float or an exact zero. The result is the host's
+ * float operation as on the other path; inexact is decided exactly in
+ * double:
+ *   + and -: TwoSum gives the exact sum as s + t (round to nearest);
+ *   *: the product of two floats is exact in double;
+ *   /: the quotient f is exact when f * right == left (exact in double).
+ * FALSE: not the common case, the caller takes the path with host flags.
+ */
+#define FP_FAST_MIN_MAGNITUDE 0x1p-126
+#define FP_FAST_MAX_MAGNITUDE 0x1p127
+
+static std_bool fp_fast_finite(float value)
+{
+	return isfinite(value);
+}
+
+static std_bool fp_fast_magnitude(double value)
+{
+	double magnitude = fabs(value);
+
+	return (magnitude > FP_FAST_MIN_MAGNITUDE) && (magnitude <= FP_FAST_MAX_MAGNITUDE);
+}
+
+/* s + t = x + y exactly (round to nearest, no overflow). */
+static void fp_two_sum(double x, double y, double *s, double *t)
+{
+	double sum = x + y;
+	double y_part = sum - x;
+
+	*s = sum;
+	*t = (x - (sum - y_part)) + (y - y_part);
+}
+
+static int fp_fast_finish(TargetCoreType *core, const RiscvDecodedInsn *decoded, float result, std_bool inexact)
+{
+	if (inexact) {
+		core->reg.fcsr |= FFLAG_NX;
+	}
+	fp_write(core, decoded->rd, float_bits(result));
+	return op_exec_advance(core, decoded);
+}
+
+static std_bool fp_binary_fast(TargetCoreType *core, const RiscvDecodedInsn *decoded, char operation,
+			       float left, float right, int *retired)
+{
+	float result;
+	double s;
+	double t;
+
+	if (!fp_fast_finite(left) || !fp_fast_finite(right)) {
+		return FALSE;
+	}
+	if ((operation == '+') || (operation == '-')) {
+		fp_two_sum((double)left, (operation == '+') ? (double)right : -(double)right, &s, &t);
+		if ((s != 0.0) && !fp_fast_magnitude(s)) {
+			return FALSE;
+		}
+		result = (operation == '+') ? (left + right) : (left - right);
+		*retired = fp_fast_finish(core, decoded, result, (s != (double)result) || (t != 0.0));
+		return TRUE;
+	}
+	if (operation == '*') {
+		s = (double)left * (double)right;
+		if ((s != 0.0) && !fp_fast_magnitude(s)) {
+			return FALSE;
+		}
+		result = left * right;
+		*retired = fp_fast_finish(core, decoded, result, s != (double)result);
+		return TRUE;
+	}
+	if (right == 0.0f) {
+		return FALSE;	/* division by zero, 0 / 0 */
+	}
+	s = (double)left / (double)right;
+	if ((s != 0.0) && !fp_fast_magnitude(s)) {
+		return FALSE;
+	}
+	result = left / right;
+	*retired = fp_fast_finish(core, decoded, result, ((double)result * (double)right) != (double)left);
+	return TRUE;
+}
+
 static int fp_binary(
 	TargetCoreType *core,
 	const RiscvDecodedInsn *decoded,
 	char operation)
 {
+	int retired;
 	volatile float left;
 	volatile float right;
 	volatile float result;
@@ -28,6 +117,9 @@ static int fp_binary(
 	}
 	left = bits_float(fp_read(core, decoded->rs1));
 	right = bits_float(fp_read(core, decoded->rs2));
+	if ((rounding == 0) && fp_binary_fast(core, decoded, operation, left, right, &retired)) {
+		return retired;
+	}
 	fp_host_clear_flags();
 	if (operation == '+') {
 		result = left + right;
@@ -82,6 +174,17 @@ static int fp_fused(
 	}
 	if (negate_addend) {
 		addend = -addend;
+	}
+	if ((rounding == 0) && fp_fast_finite(left) && fp_fast_finite(right) && fp_fast_finite(addend)) {
+		/* the common case (see fp_binary_fast()): the exact sum is s + t */
+		double s;
+		double t;
+
+		fp_two_sum((double)left * (double)right, (double)addend, &s, &t);
+		if ((s == 0.0) || fp_fast_magnitude(s)) {
+			result = fmaf(left, right, addend);
+			return fp_fast_finish(core, decoded, result, (s != (double)result) || (t != 0.0));
+		}
 	}
 	fp_host_clear_flags();
 	result = fmaf(left, right, addend);
