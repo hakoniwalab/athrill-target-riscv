@@ -25,10 +25,17 @@ RUN=$HERE/work/run
 mkdir -p "$RUN"
 cd "$RUN"
 echo "RAM, 0x40000000, 16384" > memory.txt
+# Zephyr's idle thread on this board polls mip & mie in arch_cpu_idle()
+# (no wfi): with it as the idle function, the CPU halts there while nothing
+# is pending and the clocks to the next interrupt are skipped. The symbol
+# needs DISABLE_SYMBOL_UNDERSCORE 1: by default Athrill drops a leading
+# character from every symbol name (the V850 underscore).
 cat > device_config.txt <<EOF
 DEVICE_CPU_FREQ $MHZ
 DEBUG_FUNC_ENABLE_SKIP_CLOCK 1
 DEVICE_CONFIG_DEVICE_TREE $DTB
+DISABLE_SYMBOL_UNDERSCORE 1
+DEVICE_CONFIG_IDLE_FUNCTION arch_cpu_idle
 EOF
 if [ -n "$SECONDS_LIMIT" ]; then
 	exec "$ATHRILL" -c1 -m memory.txt -d device_config.txt -t $((MHZ * 1000000 * SECONDS_LIMIT)) "$ELF"
