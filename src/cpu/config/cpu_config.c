@@ -535,6 +535,13 @@ typedef struct {
 	uint64 write_limit[4];
 	uint64 code_lo;
 	uint64 code_span;
+	/*
+	 * Chaining: the clocks this run may use (a block's entry check exits
+	 * when the blocks so far and itself would go over), and the slot of the
+	 * unlinked exit the run ended at (0: none).
+	 */
+	uint64 budget;
+	uint64 chain_slot;
 } RiscvJitCtx;
 
 static int riscv_jit_mode = -1;	/* -1: not read yet, 0: off, 1: on */
@@ -551,6 +558,16 @@ static uint64 riscv_jit_run_length[RISCV_BLOCK_MAX_LENGTH + 1U];
 static uint64 riscv_jit_insns_run;
 static uint64 riscv_jit_block_length_sum;
 static std_bool riscv_jit_dumped;
+static AthrillJitChainSlot *riscv_jit_pending_slot;	/* the last run's unlinked exit */
+static uint64 riscv_jit_link_pmp_epoch;
+static RiscvPrivilege riscv_jit_link_privilege = RISCV_PRIV_M;
+
+/* Decoded code changed or the mode the links were made in: no link stays. */
+void riscv_jit_code_changed(void)
+{
+	athrill_jit_chain_unlink_all();
+	riscv_jit_pending_slot = NULL;
+}
 
 #define RV_X(n) athrill_jit_core((uint32)(offsetof(TargetCoreType, reg.x) + 8U * (uint32)(n)), 8)
 #define RV_X32(n) athrill_jit_core((uint32)(offsetof(TargetCoreType, reg.x) + 8U * (uint32)(n)), 4)
@@ -569,6 +586,7 @@ static void riscv_jit_report(void)
 		" translated insns native=%" PRIu64 " called=%" PRIu64 "\n",
 		riscv_jit_blocks_run, st.inserts, st.blocks, st.code_bytes, st.stale, st.flushes,
 		riscv_jit_translate_failures, riscv_jit_insns_native, riscv_jit_insns_called);
+	fprintf(stderr, "INFO: JIT chain links held=%u\n", athrill_jit_chain_links());
 	{
 		uint32 n;
 		uint64 cumulative = 0U;
@@ -961,6 +979,23 @@ static std_bool riscv_jit_emit_memory(AthrillJitBuilder *b, const RiscvDecodedIn
 }
 
 /*
+ * An exit to a known pc, with pc and clock written: a chain exit, so that
+ * the block that starts at pc can follow without a return to C
+ * (jit_execute_block() links it). The idle pc is never chained to: the
+ * idle-function check runs before it, in C.
+ */
+static void riscv_jit_exit_to(AthrillJitBuilder *b, uint64 pc)
+{
+	AthrillAddrType idle_pc = athrill_idle_spin_halt_idle_pc();
+
+	if ((idle_pc != 0U) && (pc == idle_pc)) {
+		athrill_jit_exit(b);
+		return;
+	}
+	athrill_jit_chain_exit(b, RV_CTX64(chain_slot), pc);
+}
+
+/*
  * The C paths, after the block's end. Clocks: the call adds the pending
  * clocks; when the block goes on, they are taken off again, as the direct
  * path has not added them yet (pending keeps counting for both paths).
@@ -978,7 +1013,7 @@ static void riscv_jit_emit_c_paths(AthrillJitBuilder *b, const RiscvJitCPath *c_
 			athrill_jit_alu(b, ATHRILL_JIT_ADD, athrill_jit_abs(riscv_jit_clock, 8),
 					athrill_jit_abs(riscv_jit_clock, 8), athrill_jit_imm(c_paths[i].pending));
 			athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)c_paths[i].target));
-			athrill_jit_exit(b);
+			riscv_jit_exit_to(b, c_paths[i].target);
 			continue;
 		}
 		athrill_jit_mov(b, RV_PENDING, athrill_jit_imm(c_paths[i].pending));
@@ -1047,7 +1082,7 @@ static std_bool riscv_jit_emit_branch(AthrillJitBuilder *b, const RiscvDecodedIn
  * which runs the whole instruction again (nothing is written before it).
  */
 static std_bool riscv_jit_emit_jump(AthrillJitBuilder *b, const RiscvDecodedInsn *e, uint32 pending,
-				    RiscvJitCPath *c_path, std_bool *pc_written)
+				    RiscvJitCPath *c_path, std_bool *pc_written, std_bool *known, uint64 *next_pc)
 {
 	uint64 next = e->pc + e->length;
 	uint64 target;
@@ -1062,6 +1097,7 @@ static std_bool riscv_jit_emit_jump(AthrillJitBuilder *b, const RiscvDecodedInsn
 		}
 		athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)target));
 		*pc_written = TRUE;
+		*next_pc = target;
 		return TRUE;
 	}
 	if (e->execute != op_exec_jalr) {
@@ -1082,6 +1118,7 @@ static std_bool riscv_jit_emit_jump(AthrillJitBuilder *b, const RiscvDecodedInsn
 	}
 	athrill_jit_mov(b, RV_PC, RV_T0);
 	*pc_written = TRUE;
+	*known = FALSE;	/* the target is only known at run time */
 	return TRUE;
 }
 
@@ -1191,11 +1228,16 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 	RiscvJitCPath c_paths[RISCV_BLOCK_MAX_LENGTH];
 	uint32 c_path_count = 0U;
 	std_bool pc_written = FALSE;
+	std_bool next_known = TRUE;
+	uint64 next_pc = 0U;
 	uint64 i;
 
 	if (b == NULL) {
 		return NULL;
 	}
+	/* entry check: a chained run stops before a block that would go over its budget */
+	athrill_jit_alu(b, ATHRILL_JIT_ADD, RV_T0, athrill_jit_done(), athrill_jit_imm((sint64)length));
+	athrill_jit_exit_if(b, ATHRILL_JIT_GTU, RV_T0, RV_CTX64(budget));
 	for (i = 0U; i < length; i++) {
 		std_bool last = (i + 1U == length);
 
@@ -1215,7 +1257,8 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 			c_path_count++;
 			riscv_jit_insns_native++;
 			last_native = TRUE;
-		} else if (last && riscv_jit_emit_jump(b, e, pending, &c_paths[c_path_count], &pc_written)) {
+		} else if (last && riscv_jit_emit_jump(b, e, pending, &c_paths[c_path_count], &pc_written, &next_known,
+						     &next_pc)) {
 			if (e->execute == op_exec_jalr) {
 				c_path_count++;
 			}
@@ -1241,7 +1284,11 @@ static AthrillJitCode *riscv_jit_translate(const RiscvDecodedInsn *first, uint64
 	if (last_native) {
 		riscv_jit_flush_clock(b, &pending);
 		if (!pc_written) {
-			athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)(e->pc + e->length)));
+			next_pc = e->pc + e->length;
+			athrill_jit_mov(b, RV_PC, athrill_jit_imm((sint64)next_pc));
+		}
+		if (next_known) {
+			riscv_jit_exit_to(b, next_pc);
 		}
 	}
 	if (c_path_count != 0U) {
@@ -1269,6 +1316,12 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 	}
 	if (clock != riscv_jit_clock) {
 		return execute_block(core, id, budget, clock);
+	}
+	if ((core->pmp_epoch != riscv_jit_link_pmp_epoch) || (core->reg.privilege != riscv_jit_link_privilege)) {
+		/* links skip the fetch checks made under the mode they were made in */
+		riscv_jit_code_changed();
+		riscv_jit_link_pmp_epoch = core->pmp_epoch;
+		riscv_jit_link_privilege = core->reg.privilege;
 	}
 	if ((core->reg.csr.mip & core->reg.csr.mie) != 0U) {
 		return 0U;
@@ -1309,6 +1362,7 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 			return execute_block(core, id, budget, clock);
 		}
 		athrill_jit_cache_insert(riscv_jit_cache, pc, (uint32)core->reg.privilege, generation, fresh);
+		riscv_jit_pending_slot = NULL;	/* the insert may have freed the block it belongs to */
 		{
 			AthrillJitCacheStats st;
 
@@ -1334,6 +1388,11 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 	entry->jit_code = code;
 	entry->jit_generation = generation;
 	entry->jit_epoch = riscv_jit_epoch;
+	/* the run before ended at an unlinked exit to this pc: link it here */
+	if ((riscv_jit_pending_slot != NULL) && (athrill_jit_chain_tag(riscv_jit_pending_slot) == pc)) {
+		athrill_jit_chain_link(riscv_jit_pending_slot, code);
+	}
+	riscv_jit_pending_slot = NULL;
 	core->access_fault = FALSE;
 	ctx.trapped = 0U;
 	ctx.clock = clock;
@@ -1343,7 +1402,10 @@ static inline uint64 jit_execute_block(TargetCoreType *core, CoreIdType id, uint
 	if (!riscv_jit_window_unchanged(core)) {
 		riscv_jit_window(core, &ctx);
 	}
+	ctx.budget = budget;
+	ctx.chain_slot = 0U;
 	done = athrill_jit_code_run(code, core, &ctx);
+	riscv_jit_pending_slot = (AthrillJitChainSlot *)(uintptr_t)ctx.chain_slot;
 	riscv_jit_blocks_run++;
 	riscv_jit_insns_run += done;
 	riscv_jit_block_length_sum += length;

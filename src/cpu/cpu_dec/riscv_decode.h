@@ -77,6 +77,11 @@ extern const RiscvCompressedEntry riscv_compressed_table[];
 extern const uint32 riscv_compressed_table_count;
 extern const uint8 riscv_compressed_ranges[32][2];
 
+#ifdef ATHRILL_ENABLE_JIT
+/* cpu_config.c: decoded code changed, so no JIT link between blocks may stay. */
+void riscv_jit_code_changed(void);
+#endif
+
 void riscv_decode_init(void);
 const RiscvDispatchEntry *riscv_decode(uint32 instruction);
 std_bool riscv_decode_fill(
