@@ -111,6 +111,7 @@ set(RISCV_CPU_SOURCES
 
 add_library(athrill_riscv_cpu STATIC
   ${RISCV_CPU_SOURCES}
+  ${ATHRILL_JIT_SOURCES}
   "${ATHRILL_SRC_DIR}/lib/dbg_log.c")
 riscv_target(athrill_riscv_cpu)
 
@@ -160,10 +161,40 @@ if(BUILD_TESTING)
   add_test(NAME athrill-pmp COMMAND athrill-pmp-test)
   add_executable(athrill-clock-counter-test test/clock_counter_test.c
     ${RISCV_CPU_SOURCES}
+    ${ATHRILL_JIT_SOURCES}
     "${ATHRILL_SRC_DIR}/main/athrill_idle_spin_halt.c"
     src/device/device.c src/device/intc/intc.c)
   riscv_target(athrill-clock-counter-test)
   add_test(NAME athrill-clock-counter COMMAND athrill-clock-counter-test)
+  set(_fpu_fast_test_sources test/fpu_fast_test.c
+    ${RISCV_CPU_SOURCES}
+    ${ATHRILL_JIT_SOURCES}
+    "${ATHRILL_SRC_DIR}/main/athrill_idle_spin_halt.c"
+    src/device/device.c src/device/intc/intc.c)
+  add_executable(athrill-fpu-fast-test ${_fpu_fast_test_sources})
+  riscv_target(athrill-fpu-fast-test)
+  target_compile_definitions(athrill-fpu-fast-test PRIVATE ATHRILL_FPU_FAST_TEST=1)
+  if(RISCV_ERBIUM_COMPAT)
+    target_compile_options(athrill-fpu-fast-test PRIVATE
+      -UCPU_CONFIG_ERBIUM_COMPAT -DCPU_CONFIG_ERBIUM_COMPAT=0)
+  endif()
+  add_test(NAME athrill-fpu-fast COMMAND athrill-fpu-fast-test)
+  if(RISCV_ERBIUM_COMPAT)
+    add_executable(athrill-fpu-fast-erbium-test ${_fpu_fast_test_sources})
+    riscv_target(athrill-fpu-fast-erbium-test)
+    target_compile_definitions(athrill-fpu-fast-erbium-test PRIVATE ATHRILL_FPU_FAST_TEST=1)
+    add_test(NAME athrill-fpu-fast-erbium COMMAND athrill-fpu-fast-erbium-test)
+  endif()
+  unset(_fpu_fast_test_sources)
+  if(ATHRILL_ENABLE_JIT)
+    add_executable(athrill-jit-diff-test test/jit_diff_test.c
+      ${RISCV_CPU_SOURCES} ${ATHRILL_JIT_SOURCES}
+      "${ATHRILL_SRC_DIR}/main/athrill_idle_spin_halt.c"
+      src/device/device.c src/device/intc/intc.c)
+    riscv_target(athrill-jit-diff-test)
+    target_compile_definitions(athrill-jit-diff-test PRIVATE ATHRILL_JIT_DIFF_TEST=1)
+    add_test(NAME athrill-jit-diff COMMAND athrill-jit-diff-test)
+  endif()
   add_executable(athrill-symbol-lookup-test "${ATHRILL_SOURCE_DIR}/test/symbol_lookup_test.c"
     "${ATHRILL_SRC_DIR}/lib/symbol_ops.c")
   riscv_target(athrill-symbol-lookup-test)
@@ -178,7 +209,7 @@ if(BUILD_TESTING)
     athrill_riscv_device athrill_bus athrill_mpu athrill_std
     athrill_riscv_config athrill_riscv_device)
   add_executable(athrill-decode-benchmark test/decode_benchmark.c
-    ${RISCV_CPU_SOURCES} test/common/idle_spin_halt_stub.c)
+    ${RISCV_CPU_SOURCES} ${ATHRILL_JIT_SOURCES} test/common/idle_spin_halt_stub.c)
   riscv_target(athrill-decode-benchmark)
   add_executable(athrill-decode-test test/decode_test.c test/common/host_cpuemu_stub.c)
   riscv_target(athrill-decode-test)

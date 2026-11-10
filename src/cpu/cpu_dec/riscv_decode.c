@@ -278,12 +278,23 @@ RiscvDecodedInsn *riscv_decode_slot(TargetCoreType *core, uint64 pc)
 		&core->decode_pages[(pc >> RISCV_DECODE_PAGE_SHIFT) & (RISCV_DECODE_DIRECTORY_SIZE - 1U)];
 
 	if ((*slot == NULL) || ((*slot)->base != base)) {
+#ifdef ATHRILL_ENABLE_JIT
+		if (*slot != NULL) {
+			riscv_jit_code_changed();	/* the page's code leaves the decode cache */
+		}
+#endif
 		free(*slot);
 		*slot = calloc(1U, sizeof(RiscvDecodePage));
 		if (*slot == NULL) {
 			return NULL;
 		}
 		(*slot)->base = base;
+		if ((core->decode_hi == 0U) || (base < core->decode_lo)) {
+			core->decode_lo = base;
+		}
+		if (base + (1ULL << RISCV_DECODE_PAGE_SHIFT) > core->decode_hi) {
+			core->decode_hi = base + (1ULL << RISCV_DECODE_PAGE_SHIFT);
+		}
 	}
 	return &(*slot)->entries[(pc & ((1ULL << RISCV_DECODE_PAGE_SHIFT) - 1U)) >> 1U];
 }
@@ -296,6 +307,11 @@ void riscv_decode_cache_clear(TargetCoreType *core)
 		free(core->decode_pages[index]);
 		core->decode_pages[index] = NULL;
 	}
+	core->decode_lo = 0U;
+	core->decode_hi = 0U;
+#ifdef ATHRILL_ENABLE_JIT
+	riscv_jit_code_changed();
+#endif
 }
 
 void riscv_decode_cache_invalidate_pages(
@@ -325,6 +341,9 @@ void riscv_decode_cache_invalidate_pages(
 		if (entry->valid && (entry->pc <= last) && (entry->pc + entry->length > address)) {
 			entry->valid = 0U;
 			page->generation++;
+#ifdef ATHRILL_ENABLE_JIT
+			riscv_jit_code_changed();
+#endif
 		}
 	}
 }

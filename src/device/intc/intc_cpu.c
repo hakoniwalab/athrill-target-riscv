@@ -31,11 +31,7 @@ std_bool intc_take_interrupt(TargetCoreType *core, uint32 *cause)
 {
 	uint64 pending = core->reg.csr.mip & core->reg.csr.mie;
 
-	if (pending == 0U) {
-		return FALSE;
-	}
-	if ((core->reg.privilege == RISCV_PRIV_M) &&
-	    ((core->reg.csr.mstatus & (1ULL << 3U)) == 0U)) {
+	if (!intc_interrupt_takeable(core)) {
 		return FALSE;
 	}
 	if ((pending & (1ULL << 11U)) != 0U) {
